@@ -1,0 +1,69 @@
+# Shared setup for check + release build jobs:
+#   Linux packages (if needed) → protoc from bin/protoc → Rust from rust-toolchain.toml
+name: Setup build environment
+description: Install host deps, protoc (bin/protoc manifest), and Rust toolchain
+
+inputs:
+  targets:
+    description: Comma-separated rustup targets (optional)
+    required: false
+    default: ""
+  components:
+    description: Comma-separated rustup components (optional)
+    required: false
+    default: ""
+  install_linux_packages:
+    description: Install apt build packages on Linux runners
+    required: false
+    default: "true"
+
+outputs:
+  toolchain:
+    description: Channel resolved from rust-toolchain.toml
+    value: ${{ steps.toolchain.outputs.channel }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Linux build dependencies
+      if: runner.os == 'Linux' && inputs.install_linux_packages == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential \
+          pkg-config \
+          clang \
+          cmake
+
+    - name: Install protoc from bin/protoc manifest
+      shell: bash
+      env:
+        RUNNER_OS: ${{ runner.os }}
+        RUNNER_ARCH: ${{ runner.arch }}
+      run: bash "${GITHUB_WORKSPACE}/.github/scripts/install-protoc-from-manifest.sh"
+
+    - name: Resolve toolchain from rust-toolchain.toml
+      id: toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        channel=$(python3 - <<'PY'
+        from pathlib import Path
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore
+        data = tomllib.loads(Path("rust-toolchain.toml").read_text(encoding="utf-8"))
+        print(data["toolchain"]["channel"])
+        PY
+        )
+        echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+        echo "Resolved toolchain channel: ${channel}"
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.toolchain.outputs.channel }}
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
