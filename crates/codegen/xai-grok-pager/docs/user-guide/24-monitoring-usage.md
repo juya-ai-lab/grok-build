@@ -15,9 +15,9 @@ These knobs are independent of each other (and of this guide's external OTEL str
 
 | Setting | How to set it |
 |---------|---------------|
-| Telemetry master switch | `[features] telemetry` / `GROK_TELEMETRY_ENABLED` |
+| Telemetry master switch | Hard-disabled in this build; config/env values are ignored |
 | `/privacy` | `/privacy opt-in` / `/privacy opt-out`, or Settings |
-| Trace upload | `[telemetry] trace_upload` / `GROK_TELEMETRY_TRACE_UPLOAD` |
+| Trace upload | Hard-disabled in this build; config/env values are ignored |
 | External OpenTelemetry | `GROK_EXTERNAL_OTEL` / `[telemetry] otel_*` (this guide) |
 
 See also [Authentication](02-authentication.md#related-settings) and
@@ -29,9 +29,10 @@ The external stream is:
 
 - **Off by default**, and requires a *double opt-in* (a master switch **and**
   an explicit exporter selection).
-- **Content-free by default**: no prompts, no code, no file paths (extension
+- **Content-free by construction in this build**: no prompts, no code, no file paths (extension
   only), no tool arguments, no bash commands, and MCP/skill/plugin names
-  collapsed to categories. Optional content gates re-enable some of these.
+  collapsed to categories. The former prompt/tool-detail gates cannot re-enable
+  those fields.
 - **Structurally separate** from SpaceXAI-internal telemetry: its exporters carry
   only the headers you configure, never SpaceXAI credentials.
 - **Independent of SpaceXAI data-retention opt-outs**: it works even when
@@ -72,8 +73,8 @@ without the master switch.
 | `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` | `delta` | `delta` \| `cumulative`. |
 | `OTEL_METRICS_INCLUDE_SESSION_ID` | `1` | Attach `session.id` to metrics (cardinality opt-out). |
 | `OTEL_METRICS_INCLUDE_VERSION` | `0` | Attach `app.version` to metrics. |
-| `OTEL_LOG_USER_PROMPTS` | `0` | Content gate: prompt text on `grok_code.user_prompt` (60 KB cap, secret-scrubbed). |
-| `OTEL_LOG_TOOL_DETAILS` | `0` | Content gate: tool parameters (4 KB cap), full file paths, verbatim MCP/skill/plugin names. Bash command text is **never** exported in v1, even with this gate. |
+| `OTEL_LOG_USER_PROMPTS` | ignored | Prompt export is hard-disabled in this build. |
+| `OTEL_LOG_TOOL_DETAILS` | ignored | Tool parameters, full paths, and verbatim integration names are hard-disabled in this build. |
 
 `OTEL_RESOURCE_ATTRIBUTES` is deliberately ignored: the resource is built
 from a fixed, audited attribute set.
@@ -98,8 +99,8 @@ otel_metrics_exporter = "otlp"
 otel_logs_exporter = "otlp"
 otel_endpoint = "https://collector.corp.example:4318"
 otel_protocol = "http/protobuf"  # or "grpc"
-otel_log_user_prompts = false   # admins can pin these via requirements
-otel_log_tool_details = false
+otel_log_user_prompts = false   # hard-disabled; true is ignored
+otel_log_tool_details = false   # hard-disabled; true is ignored
 ```
 
 The config keys are `otel_*` under `[telemetry]`; the **env vars keep their
@@ -113,7 +114,7 @@ There is deliberately no `headers` key: supply collector auth via
 Managed deployments can additionally enable org-wide telemetry by distributing
 the `[telemetry]` `otel_*` keys through `grok setup` managed config /
 requirements pins, or force-disable it fleet-wide with the same local config
-layers (`external_otel_disabled`, content-gate locks).
+layers (`external_otel_disabled`). Prompt/tool-detail content cannot be enabled.
 
 ## Resource attributes
 

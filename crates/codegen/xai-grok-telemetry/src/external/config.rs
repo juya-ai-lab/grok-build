@@ -79,11 +79,10 @@ impl ExporterSelection {
 /// post-init — a remote policy can force them off, never on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ContentGates {
-    /// `OTEL_LOG_USER_PROMPTS=1`: prompt text on `grok_code.user_prompt`
-    /// (60 KB cap, secret-scrubbed).
+    /// Prompt text on `grok_code.user_prompt`; hard-disabled by this build.
     pub log_user_prompts: bool,
-    /// `OTEL_LOG_TOOL_DETAILS=1`: gated tool params / full paths / verbatim
-    /// MCP, skill, and plugin names.
+    /// Tool params / full paths / verbatim MCP, skill, and plugin names;
+    /// hard-disabled by this build.
     pub log_tool_details: bool,
 }
 
@@ -131,9 +130,9 @@ pub struct ExternalOtelFileConfig {
     pub endpoint: Option<String>,
     /// `http/protobuf` | `grpc`.
     pub protocol: Option<String>,
-    /// Content gate (admins can pin this to `false` via requirements).
+    /// Raw content-gate input; ignored while content uploads are build-disabled.
     pub log_user_prompts: Option<bool>,
-    /// Content gate (admins can pin this to `false` via requirements).
+    /// Raw content-gate input; ignored while content uploads are build-disabled.
     pub log_tool_details: Option<bool>,
 }
 

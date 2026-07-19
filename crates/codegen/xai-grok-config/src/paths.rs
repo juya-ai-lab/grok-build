@@ -29,13 +29,14 @@ pub fn default_grok_home() -> PathBuf {
 }
 
 /// Resolve `$GROK_HOME` (or the normal `~/.grok` default) only when it is not
-/// Claude- or Codex-owned state.
+/// third-party agent-owned state.
 ///
 /// This reads the live environment on every call so processes and test
 /// harnesses that intentionally change `GROK_HOME` do not bypass validation via
 /// [`GROK_HOME`]'s cache. An empty `GROK_HOME`, an unavailable user home, or a
 /// path equal to/below the effective `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
-/// `~/.claude`, or the Codex-shared `~/.agents` root returns `None`, as does a
+/// `~/.claude`, `~/.cursor`, or the shared `~/.agents` root returns `None`, as
+/// does a
 /// path whose exact basename is `.claude.json`.
 pub fn validated_grok_home() -> Option<PathBuf> {
     #[allow(deprecated)]
@@ -56,7 +57,7 @@ pub fn validated_grok_home() -> Option<PathBuf> {
     )
 }
 
-/// Return `path` unchanged only when it is outside foreign/shared state roots.
+/// Return `path` unchanged only when it is outside vendor-specific state roots.
 ///
 /// Existing paths (and the deepest existing ancestor of a not-yet-created
 /// path) are canonicalized before the component-safe containment check. This
@@ -76,14 +77,45 @@ pub fn validate_grok_path(path: &Path) -> Option<PathBuf> {
 
 /// Perform the non-I/O portion of [`validate_grok_path`].
 ///
-/// Rejects literal Claude/Codex state components and an exact `.claude.json`
-/// path component. This is useful at mutation boundaries that must fail before any
-/// canonicalization or filesystem metadata access. Existing symlink aliases
-/// still require the full [`validate_grok_path`] check afterwards.
+/// Rejects literal third-party agent state components and an exact
+/// `.claude.json` path component. This is useful at mutation boundaries that
+/// must fail before any canonicalization or filesystem metadata access.
+/// Existing symlink aliases still require the full [`validate_grok_path`] check
+/// afterwards.
 pub fn validate_grok_path_lexically(path: &Path) -> Option<PathBuf> {
     if path.as_os_str().is_empty()
         || has_vendor_state_component(path)
         || has_vendor_state_basename(path)
+    {
+        return None;
+    }
+    Some(path.to_path_buf())
+}
+
+/// Return a skill or command source path only when it is outside proprietary
+/// vendor state. Inside the shared `.agents` namespace, the original Grok
+/// surfaces `.agents/skills` and `.agents/commands` are accepted.
+///
+/// The `.agents` directory itself is accepted as a discovery container, but
+/// unsupported sibling surfaces such as `.agents/rules` and
+/// `.agents/personas` remain outside Grok's boundary.
+pub fn validate_skill_path(path: &Path) -> Option<PathBuf> {
+    #[allow(deprecated)]
+    let user_home = std::env::home_dir();
+    validate_skill_path_with(
+        path,
+        user_home.as_deref(),
+        std::env::var_os("CODEX_HOME"),
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+    )
+}
+
+/// Perform the non-I/O portion of [`validate_skill_path`].
+pub fn validate_skill_path_lexically(path: &Path) -> Option<PathBuf> {
+    if path.as_os_str().is_empty()
+        || has_proprietary_vendor_state_component(path)
+        || has_vendor_state_basename(path)
+        || !agents_components_are_skill_or_command_scoped(path)
     {
         return None;
     }
@@ -126,13 +158,68 @@ fn validate_grok_path_with(
     Some(path.to_path_buf())
 }
 
+fn validate_skill_path_with(
+    path: &Path,
+    user_home: Option<&Path>,
+    codex_home_env: Option<std::ffi::OsString>,
+    claude_home_env: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    validate_skill_path_lexically(path)?;
+
+    let candidate = path_for_comparison(path)?;
+    validate_skill_path_lexically(&candidate)?;
+    let codex_home = codex_home_env
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| user_home.map(|home| home.join(".codex")));
+    let claude_home = claude_home_env
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let default_claude_home = user_home.map(|home| home.join(".claude"));
+
+    for root in [codex_home, claude_home, default_claude_home]
+        .into_iter()
+        .flatten()
+    {
+        let root = path_for_comparison(&root)?;
+        if path_is_within(&candidate, &root) {
+            return None;
+        }
+    }
+    Some(path.to_path_buf())
+}
+
 fn has_vendor_state_component(path: &Path) -> bool {
     path.components().any(|component| {
         let component = component.as_os_str();
-        [".claude", ".codex", ".agents", ".claude.json"]
+        [".claude", ".cursor", ".codex", ".agents", ".claude.json"]
             .into_iter()
             .any(|blocked| os_component_eq(component, std::ffi::OsStr::new(blocked)))
     })
+}
+
+fn has_proprietary_vendor_state_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        let component = component.as_os_str();
+        [".claude", ".cursor", ".codex", ".claude.json"]
+            .into_iter()
+            .any(|blocked| os_component_eq(component, std::ffi::OsStr::new(blocked)))
+    })
+}
+
+fn agents_components_are_skill_or_command_scoped(path: &Path) -> bool {
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
+        if os_component_eq(component.as_os_str(), std::ffi::OsStr::new(".agents"))
+            && components.peek().is_some_and(|next| {
+                !os_component_eq(next.as_os_str(), std::ffi::OsStr::new("skills"))
+                    && !os_component_eq(next.as_os_str(), std::ffi::OsStr::new("commands"))
+            })
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn has_vendor_state_basename(path: &Path) -> bool {
@@ -234,7 +321,7 @@ pub fn grok_home() -> PathBuf {
 
 fn invalid_grok_home() -> ! {
     panic!(
-        "refusing invalid GROK_HOME: path is empty, named .claude.json, or inside CODEX_HOME, CLAUDE_CONFIG_DIR, ~/.claude, or ~/.agents state"
+        "refusing invalid GROK_HOME: path is empty, named .claude.json, or inside CODEX_HOME, CLAUDE_CONFIG_DIR, ~/.claude, ~/.cursor, or ~/.agents state"
     )
 }
 
@@ -459,13 +546,12 @@ mod tests {
     }
 
     #[test]
-    fn claude_config_env_default_claude_and_agents_roots_are_all_rejected() {
+    fn claude_config_env_and_default_claude_roots_are_rejected() {
         let tmp = TempDir::new().unwrap();
         let user_home = tmp.path().join("home");
         let custom_claude = tmp.path().join("custom-claude-state");
         let default_claude = user_home.join(".claude");
-        let agents_home = user_home.join(".agents");
-        for root in [&custom_claude, &default_claude, &agents_home] {
+        for root in [&custom_claude, &default_claude] {
             std::fs::create_dir_all(root).unwrap();
         }
         let claude_env = Some(custom_claude.clone().into_os_string());
@@ -473,7 +559,6 @@ mod tests {
         for path in [
             custom_claude.join("grok"),
             default_claude.join("grok"),
-            agents_home.join("grok"),
         ] {
             assert_eq!(
                 validate_grok_path_with(&path, Some(&user_home), None, claude_env.clone(),),
@@ -549,7 +634,7 @@ mod tests {
         let user_home = tmp.path().join("home");
         let project = tmp.path().join("project");
 
-        for component in [".claude", ".codex", ".agents"] {
+        for component in [".claude", ".cursor", ".codex", ".agents"] {
             assert_eq!(
                 validate_grok_path_with(
                     &project.join(component).join("grok-state"),
@@ -565,11 +650,57 @@ mod tests {
             validate_grok_path_with(&similarly_named, Some(&user_home), None, None),
             Some(similarly_named)
         );
+        let standard_agents_skills = project.join(".agents/skills/example/SKILL.md");
+        assert_eq!(
+            validate_grok_path_with(&standard_agents_skills, Some(&user_home), None, None),
+            None
+        );
+        assert_eq!(
+            validate_skill_path_with(
+                &standard_agents_skills,
+                Some(&user_home),
+                None,
+                None,
+            ),
+            Some(standard_agents_skills)
+        );
+    }
+
+    #[test]
+    fn skill_paths_accept_the_original_agents_skill_and_command_surfaces() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let project = tmp.path().join("project");
+
+        for path in [
+            project.join(".grok/skills/example/SKILL.md"),
+            project.join(".agents"),
+            project.join(".agents/skills/example/SKILL.md"),
+            project.join(".agents/commands/example.md"),
+            user_home.join(".agents/skills/example/SKILL.md"),
+            user_home.join(".agents/commands/example.md"),
+        ] {
+            assert_eq!(
+                validate_skill_path_with(&path, Some(&user_home), None, None),
+                Some(path)
+            );
+        }
+
+        for path in [
+            project.join(".agents/rules/example.md"),
+            project.join(".agents/personas/example.md"),
+            project.join(".codex/skills/example/SKILL.md"),
+        ] {
+            assert_eq!(
+                validate_skill_path_with(&path, Some(&user_home), None, None),
+                None
+            );
+        }
     }
 
     #[test]
     #[should_panic(
-        expected = "refusing invalid GROK_HOME: path is empty, named .claude.json, or inside CODEX_HOME, CLAUDE_CONFIG_DIR, ~/.claude, or ~/.agents state"
+        expected = "refusing invalid GROK_HOME: path is empty, named .claude.json, or inside CODEX_HOME, CLAUDE_CONFIG_DIR, ~/.claude, ~/.cursor, or ~/.agents state"
     )]
     fn cached_grok_home_refuses_invalid_resolution_with_clear_error() {
         invalid_grok_home();
@@ -592,6 +723,39 @@ mod tests {
                 None,
                 None,
             ),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_validator_allows_agents_skills_and_commands_but_rejects_other_siblings() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let agents = user_home.join(".agents");
+        let skills = agents.join("skills");
+        let commands = agents.join("commands");
+        let rules = agents.join("rules");
+        let skills_alias = tmp.path().join("shared-skills");
+        let commands_alias = tmp.path().join("shared-commands");
+        let rules_alias = tmp.path().join("apparently-skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::fs::create_dir_all(&commands).unwrap();
+        std::fs::create_dir_all(&rules).unwrap();
+        std::os::unix::fs::symlink(&skills, &skills_alias).unwrap();
+        std::os::unix::fs::symlink(&commands, &commands_alias).unwrap();
+        std::os::unix::fs::symlink(&rules, &rules_alias).unwrap();
+
+        assert_eq!(
+            validate_skill_path_with(&skills_alias, Some(&user_home), None, None),
+            Some(skills_alias)
+        );
+        assert_eq!(
+            validate_skill_path_with(&commands_alias, Some(&user_home), None, None),
+            Some(commands_alias)
+        );
+        assert_eq!(
+            validate_skill_path_with(&rules_alias, Some(&user_home), None, None),
             None
         );
     }

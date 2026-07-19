@@ -20,6 +20,12 @@
 /// must fail closed rather than falling back to per-surface defaults.
 pub const CLAUDE_CODE_COMPAT_ENABLED: bool = false;
 
+/// Build-wide kill switch for every Cursor compatibility surface.
+///
+/// Cursor paths are retained in the raw schema only for input compatibility;
+/// no runtime resolver or consumer may discover, load, watch, or resume them.
+pub const CURSOR_COMPAT_ENABLED: bool = false;
+
 /// Build-wide kill switch for importing or resuming Codex-owned state.
 ///
 /// Native Grok tools that happen to use a Codex-derived patch format are not
@@ -29,12 +35,23 @@ pub const CODEX_COMPAT_ENABLED: bool = false;
 
 /// Build-wide kill switch for uploading user/session/workspace content.
 ///
-/// Ordinary aggregate telemetry remains available.  Cloud trace artifacts,
-/// session replication/writeback, relay mirroring, sharing, workspace upload
-/// queues, and content-bearing OTEL fields must all fail closed against this
-/// constant; runtime config, environment variables, and remote settings must
-/// never be able to turn them back on in this fork.
+/// Cloud trace artifacts, session replication/writeback, relay mirroring,
+/// sharing, workspace upload queues, and content-bearing OTEL fields must all
+/// fail closed against this constant; runtime config, environment variables,
+/// and remote settings must never be able to turn them back on in this fork.
 pub const CONTENT_UPLOADS_ENABLED: bool = false;
+
+/// Build-wide kill switch for aggregate/product telemetry.
+///
+/// Runtime config, environment variables, requirements, and remote settings
+/// must not be able to turn this path back on in this fork.
+pub const AGGREGATE_TELEMETRY_ENABLED: bool = false;
+
+/// Build-wide kill switch for feedback collection requests.
+pub const FEEDBACK_ENABLED: bool = false;
+
+/// Build-wide kill switch for Sentry/error-reporting uploads.
+pub const ERROR_REPORTING_ENABLED: bool = false;
 
 pub mod campaigns;
 pub mod config_override;
@@ -73,7 +90,8 @@ pub use paths::{
     claude_managed_settings_path, claude_managed_settings_probe_path, decode_cwd_from_dirname,
     default_grok_home, encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application,
     grok_application_in, grok_home, sessions_cwd_dir, system_config_dir, user_grok_home,
-    validate_grok_path, validate_grok_path_lexically, validated_grok_home,
+    validate_grok_path, validate_grok_path_lexically, validate_skill_path,
+    validate_skill_path_lexically, validated_grok_home,
 };
 pub use validation::{
     RequirementsError, RequirementsLayer, RequirementsSource, load_merged_requirements,

@@ -198,18 +198,18 @@ The model has access to two built-in tools for working with MCP servers:
 
 ## Compatibility
 
-Grok loads MCP server configurations from multiple sources for compatibility:
+Grok loads native and standard MCP server configurations from these sources:
 
 | Source | Format | Location | Configurable |
 |--------|--------|----------|-------------|
 | `config.toml` | Native Grok config | `~/.grok/config.toml`, `.grok/config.toml` | Always on |
-| `.claude.json` | Claude Code format | `~/.claude.json` | `[compat.claude] mcps` |
-| `.cursor/mcp.json` | Cursor format | `~/.cursor/mcp.json`, `<project>/.cursor/mcp.json` | `[compat.cursor] mcps` |
+| `.claude.json` | Claude Code format | `~/.claude.json` | Disabled in this build |
+| `.cursor/mcp.json` | Cursor format | `~/.cursor/mcp.json`, `<project>/.cursor/mcp.json` | Disabled in this build |
 | `.mcp.json` | MCP standard format | Project root (cwd to git root) | Loaded unless you have imported or dismissed the Claude import prompt (the import marker is set) |
 
-All sources are merged in priority order: config.toml > Claude > Cursor > `.mcp.json`. Servers from higher-priority sources take precedence when names conflict.
-
-The Claude and Cursor MCP sources are scanned by default. To disable scanning for a specific vendor, set `[compat.<vendor>] mcps = false` in `~/.grok/config.toml` or the corresponding environment variable (`GROK_CURSOR_MCPS_ENABLED`, `GROK_CLAUDE_MCPS_ENABLED`). See [Configuration](05-configuration.md#harness-compatibility) for details. Use `grok inspect` to see which MCP servers were loaded and their vendor origin (`[cursor]`, `[claude]`).
+Enabled sources are merged by priority, with `config.toml` taking precedence
+over `.mcp.json` when names conflict. Claude and Cursor MCP roots are not
+probed, and runtime configuration cannot enable them.
 
 ---
 

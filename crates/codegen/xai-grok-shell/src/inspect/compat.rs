@@ -178,111 +178,30 @@ fn resolve_compat_entry(
 mod tests {
     use super::*;
 
-    fn resolve_without_env(effective_config: Result<&toml::Value, ()>) -> ExternalCompatReport {
-        resolve_inspect_compat_with_env(effective_config, |_| None)
-    }
-
-    fn entry<'a>(
-        report: &'a ExternalCompatReport,
-        vendor: &str,
-        surface: &str,
-    ) -> &'a ExternalCompatEntry {
-        report
-            .cells
-            .iter()
-            .find(|entry| entry.vendor == vendor && entry.surface == surface)
-            .unwrap()
-    }
-
     #[test]
-    fn empty_config_reports_defaults_and_remote_not_loaded() {
-        let effective_config = toml::Value::Table(toml::map::Map::new());
-        let report = resolve_without_env(Ok(&effective_config));
-
-        assert!(!report.remote_settings_loaded);
-        assert_eq!(report.cells.len(), 6);
-        assert!(
-            report
-                .cells
-                .iter()
-                .all(|cell| cell.enabled && cell.source == CompatSource::Default)
-        );
-        assert!(report.cells.iter().all(|entry| entry.vendor == "cursor"));
-        let json = serde_json::to_value(&report).unwrap();
-        assert_eq!(json["remoteSettingsLoaded"], false);
-    }
-
-    #[test]
-    fn inspect_compat_uses_env_config_default_precedence() {
-        let effective_config: toml::Value =
-            toml::from_str("[compat.cursor]\nskills = false\nrules = false\n").unwrap();
-        let report = resolve_inspect_compat_with_env(Ok(&effective_config), |cell| {
-            (cell.env_var() == "GROK_CURSOR_SKILLS_ENABLED").then_some(true)
-        });
-
-        let skills = entry(&report, "cursor", "skills");
-        assert!(skills.enabled);
-        assert_eq!(skills.source, CompatSource::Env);
-        let rules = entry(&report, "cursor", "rules");
-        assert!(!rules.enabled);
-        assert_eq!(rules.source, CompatSource::Config);
-        let agents = entry(&report, "cursor", "agents");
-        assert!(agents.enabled);
-        assert_eq!(agents.source, CompatSource::Default);
-    }
-
-    #[test]
-    fn config_load_failure_fails_closed_unless_env_overrides() {
-        let report = resolve_inspect_compat_with_env(Err(()), |cell| {
-            (cell.env_var() == "GROK_CURSOR_SKILLS_ENABLED").then_some(true)
-        });
-
-        let skills = entry(&report, "cursor", "skills");
-        assert!(skills.enabled);
-        assert_eq!(skills.source, CompatSource::Env);
-        let rules = entry(&report, "cursor", "rules");
-        assert!(!rules.enabled);
-        assert_eq!(rules.source, CompatSource::ConfigError);
-        assert_eq!(
-            serde_json::to_value(rules).unwrap(),
-            serde_json::json!({
-                "vendor": "cursor",
-                "surface": "rules",
-                "enabled": false,
-                "source": "configError"
-            })
-        );
-    }
-
-    #[test]
-    fn malformed_cell_fails_closed_without_erasing_valid_cells() {
+    fn inspect_reports_no_runtime_compatibility_cells() {
         let effective_config: toml::Value = toml::from_str(
             r#"
 [compat.cursor]
-skills = false
-rules = "malformed"
+skills = true
+rules = true
 agents = true
-[compat.claude]
-hooks = false
+mcps = true
+hooks = true
+sessions = true
 "#,
         )
         .unwrap();
-        let report = resolve_without_env(Ok(&effective_config));
+        let report = resolve_inspect_compat_with_env(Ok(&effective_config), |_| Some(true));
 
-        let skills = entry(&report, "cursor", "skills");
-        assert!(!skills.enabled);
-        assert_eq!(skills.source, CompatSource::Config);
-        let rules = entry(&report, "cursor", "rules");
-        assert!(!rules.enabled);
-        assert_eq!(rules.source, CompatSource::ConfigError);
-        let agents = entry(&report, "cursor", "agents");
-        assert!(agents.enabled);
-        assert_eq!(agents.source, CompatSource::Config);
-        assert!(
-            report
-                .cells
-                .iter()
-                .all(|entry| entry.vendor != "claude" && entry.vendor != "codex")
-        );
+        assert!(!report.remote_settings_loaded);
+        assert!(report.cells.is_empty());
+    }
+
+    #[test]
+    fn vendor_path_classification_remains_diagnostic_only() {
+        assert_eq!(derive_vendor("/repo/.cursor/rules/a.md"), Some("cursor"));
+        assert_eq!(derive_vendor("/repo/.claude/CLAUDE.md"), Some("claude"));
+        assert_eq!(derive_vendor("/repo/.agents/skills/a/SKILL.md"), None);
     }
 }

@@ -474,10 +474,10 @@ pub fn extract_skill_body(content: &str) -> String {
 /// `load_skill_content` in `grok_build/skill/mod.rs` is a duplicate
 /// of this.
 pub async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
-    let path = xai_grok_config::validate_grok_path(std::path::Path::new(&skill.path)).ok_or_else(
+    let path = xai_grok_config::validate_skill_path(std::path::Path::new(&skill.path)).ok_or_else(
         || {
             format!(
-                "Refusing to read skill file '{}' from Claude/Codex vendor state",
+                "Refusing to read skill file '{}' outside supported skill roots",
                 skill.path
             )
         },
@@ -496,10 +496,10 @@ pub async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
 
 /// Load skill body into SkillInfo.
 pub async fn load_skill_with_body(skill: &SkillInfo) -> Result<SkillInfo, String> {
-    let path = xai_grok_config::validate_grok_path(std::path::Path::new(&skill.path)).ok_or_else(
+    let path = xai_grok_config::validate_skill_path(std::path::Path::new(&skill.path)).ok_or_else(
         || {
             format!(
-                "Refusing to read skill file '{}' from Claude/Codex vendor state",
+                "Refusing to read skill file '{}' outside supported skill roots",
                 skill.path
             )
         },

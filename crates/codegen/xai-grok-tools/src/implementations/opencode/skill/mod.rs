@@ -121,9 +121,9 @@ fn find_skill<'a>(name: &str, skills: &'a [SkillInfo]) -> FindSkillResult<'a> {
 
 /// Load skill content from its SKILL.md file, stripping YAML frontmatter.
 async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
-    let path = xai_grok_config::validate_grok_path(Path::new(&skill.path)).ok_or_else(|| {
+    let path = xai_grok_config::validate_skill_path(Path::new(&skill.path)).ok_or_else(|| {
         format!(
-            "Refusing to read skill file '{}' from Claude/Codex vendor state",
+            "Refusing to read skill file '{}' outside supported skill roots",
             skill.path
         )
     })?;
@@ -140,7 +140,7 @@ async fn list_skill_files(skill: &SkillInfo, limit: usize) -> Vec<String> {
         Some(d) => d,
         None => return vec![],
     };
-    let Some(dir) = xai_grok_config::validate_grok_path(dir) else {
+    let Some(dir) = xai_grok_config::validate_skill_path(dir) else {
         return vec![];
     };
 
@@ -162,7 +162,7 @@ async fn list_skill_files(skill: &SkillInfo, limit: usize) -> Vec<String> {
         {
             continue;
         }
-        if xai_grok_config::validate_grok_path(&path).is_none() {
+        if xai_grok_config::validate_skill_path(&path).is_none() {
             continue;
         }
         files.push(path.display().to_string());

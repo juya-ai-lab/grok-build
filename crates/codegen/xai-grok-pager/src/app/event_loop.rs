@@ -1016,7 +1016,7 @@ pub(crate) async fn run(
             // well as at the scanner boundary.
             claude: false,
             codex: false,
-            cursor: compat.cursor.sessions,
+            cursor: xai_grok_config::CURSOR_COMPAT_ENABLED && compat.cursor.sessions,
         };
 
     // Load notification config from [ui.notifications] in config.toml.

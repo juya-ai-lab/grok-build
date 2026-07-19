@@ -1,5 +1,5 @@
 > [!NOTE]
-> 本构建硬禁用 Claude/Codex 兼容、自动会话/工作区制品上传，以及 external OTEL 中的提示词和工具详情字段；聚合且经脱敏的元数据遥测、错误报告和反馈路径仍受原有开关控制。
+> 本构建硬禁用 Claude/Codex/Cursor 兼容、自动会话/工作区制品上传、relay 同步，以及 external OTEL 中的提示词和工具详情字段；聚合元数据遥测、错误报告和反馈路径也在源码中固定关闭。原版 Grok 已有的 `.agents/skills` 与 `.agents/commands` 支持仍保留；OAuth 登录和正常推理不受影响。
 
 <div align="center">
 

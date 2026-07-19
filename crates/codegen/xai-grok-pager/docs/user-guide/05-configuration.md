@@ -378,49 +378,40 @@ ignore = ["~/my-team-skills/wip"]     # paths to exclude
 disabled = ["wip-skill"]              # skill names to keep listed but inactive
 ```
 
-### Harness Compatibility
+### Compatibility Boundary
 
-This build only permits Cursor compatibility. Claude Code and Codex
-compatibility are compile-time disabled: TOML, environment variables, remote
-settings, injected skills, and session-picker data cannot enable them. Their
-state roots (`.claude`, `.codex`, and Codex's `.agents` skill root) are not
-scanned as Grok configuration.
+This build disables Cursor, Claude Code, and Codex compatibility at compile
+time: TOML, environment variables, remote settings, injected skills, and
+session-picker data cannot enable them. Their proprietary state roots
+(`.claude`, `.cursor`, and `.codex`) are not scanned as Grok configuration.
+The original shared `.agents/skills` and `.agents/commands` discovery remains enabled.
 
 ```toml
 [compat.cursor]
-skills = true     # scan ~/.cursor/skills/ and <cwd>/.cursor/skills/
-rules = true      # scan ~/.cursor/rules/ and <dir>/.cursor/rules/
-agents = true     # scan ~/.cursor/ for named instruction files
-mcps = true       # scan ~/.cursor/mcp.json and <cwd>/.cursor/mcp.json
-hooks = true      # scan ~/.cursor/hooks.json and <cwd>/.cursor/hooks.json
-sessions = true   # staged; no scanner consumer yet
+skills = true     # ignored: Cursor compatibility is compile-time disabled
+rules = true      # ignored: Cursor compatibility is compile-time disabled
+agents = true     # ignored: Cursor compatibility is compile-time disabled
+mcps = true       # ignored: Cursor compatibility is compile-time disabled
+hooks = true      # ignored: Cursor compatibility is compile-time disabled
+sessions = true   # ignored: Cursor compatibility is compile-time disabled
 
 ```
 
-Claude and Codex keys may still deserialize as part of the shared config schema,
-but every such cell resolves to `false`. The `resume-claude` and `resume-codex`
-skills and the former Codex agent/toolset profile are also rejected.
-
-Cursor cells can be toggled via environment variable or `config.toml`. See the
-environment-variables reference for the env var names. Resolution order for
-Cursor is: env var > config.toml > default (on).
+Cursor, Claude, and Codex keys may still deserialize as part of the shared
+config schema, but every such cell resolves to `false`. The `resume-claude` and
+`resume-codex` skills and the former Codex agent/toolset profile are also
+rejected.
 
 ### Content upload boundary
 
-This fork keeps ordinary aggregate telemetry configurable, but compile-time
-disables content-bearing upload paths: trace artifacts, session
-replication/writeback, relay mirroring, session sharing, workspace upload
-queues, and prompt/tool-detail OTEL fields. Configuration, environment
-variables, managed requirements, and remote settings cannot re-enable them.
+This fork compile-time disables aggregate telemetry, error reporting, feedback,
+trace artifacts, session replication/writeback, relay mirroring, session
+sharing, workspace upload queues, and prompt/tool-detail OTEL fields.
+Configuration, environment variables, managed requirements, and remote
+settings cannot re-enable them.
 Model inference still sends the prompt and context selected for a request to
 the configured model endpoint; that traffic is the model request itself, not a
 separate file or session upload channel.
-
-`grok inspect` reports cells that still need session-start resolution as
-`?` until a value is available; cells with an explicit env or TOML value
-use that value. Affected discovery entries report
-`compatibilityStatus: "unresolved"` in JSON and `[compat unresolved]` in
-human output.
 
 ### Plugins
 
@@ -568,27 +559,17 @@ See [Keyboard Shortcuts](03-keyboard-shortcuts.md) for the complete reference.
 
 ### Telemetry
 
-Independent knobs (see [Monitoring Usage](24-monitoring-usage.md#related-settings)):
+This build fixes the SpaceXAI-facing paths off in source (see [Monitoring Usage](24-monitoring-usage.md#related-settings)):
 
-- **`[features] telemetry`** / `GROK_TELEMETRY_ENABLED`: product analytics master switch. `/privacy` does not change it.
+- **`[features] telemetry`** / `GROK_TELEMETRY_ENABLED`: ignored; product analytics is hard-disabled.
 - **`/privacy`** / Settings: coding data sharing (separate from telemetry).
-- **`[telemetry] trace_upload`** / `GROK_TELEMETRY_TRACE_UPLOAD`: session traces; follows telemetry when unset.
-- **`[telemetry] otel_*`** / `GROK_EXTERNAL_OTEL`: external OTEL to your collector (below).
+- **`[telemetry] trace_upload`** / `GROK_TELEMETRY_TRACE_UPLOAD`: ignored; trace upload is hard-disabled.
+- **`[telemetry] otel_*`** / `GROK_EXTERNAL_OTEL`: content-free external OTEL to your own collector remains configurable; prompt and tool-detail fields are hard-disabled.
 
-When telemetry is enabled, enterprises that run their own collector can redirect
-it or selectively disable parts of it under `[telemetry]`:
-
-```toml
-[telemetry]
-events_url = "https://telemetry.your-company.com/events"  # send events to your own collector
-events_api_key = "your-collector-token"                   # auth for your collector, if required
-mixpanel_enabled = false                                  # disable Mixpanel product analytics
-trace_upload = false                                      # disable session/trace uploads (inherits the telemetry toggle when unset)
-```
-
-Set these only to point telemetry at your own infrastructure or to turn parts of it off. The built-in endpoint and credentials are managed by Grok; leave them unset to use the defaults.
-
-The same `[telemetry]` table also configures the **external OpenTelemetry stream**, an independent opt-in (it does not require the telemetry toggle above) that ships a curated, content-free usage schema to your *own* OTLP collector. Collector auth is supplied via `OTEL_EXPORTER_OTLP_HEADERS` and is never stored on disk. See [Monitoring & Usage](24-monitoring-usage.md) for the full schema, env vars, and privacy model.
+The `[telemetry]` table can still configure the independent **external
+OpenTelemetry stream** to your own OTLP collector. Collector auth is supplied
+via `OTEL_EXPORTER_OTLP_HEADERS` and is never stored on disk. See
+[Monitoring & Usage](24-monitoring-usage.md) for the schema and privacy model.
 
 ```toml
 [telemetry]
@@ -597,8 +578,8 @@ otel_metrics_exporter = "otlp"                            # otlp | console | non
 otel_logs_exporter = "otlp"                               # otlp | console | none
 otel_endpoint = "https://collector.corp.example:4318"     # OTLP base endpoint
 otel_protocol = "http/protobuf"                           # http/protobuf | grpc
-otel_log_user_prompts = false                             # content gate (admins can pin via requirements)
-otel_log_tool_details = false                             # content gate (admins can pin via requirements)
+otel_log_user_prompts = false                             # hard-disabled in this build
+otel_log_tool_details = false                             # hard-disabled in this build
 ```
 
 ### Enterprise Deployment

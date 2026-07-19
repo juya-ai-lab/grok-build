@@ -48,8 +48,8 @@ pub struct SkillsConfig {
 
 /// List all discovered skills with their metadata.
 ///
-/// Priority order: Local (`cwd/.grok/skills`, optionally
-/// `cwd/.cursor/skills`) → Intermediate dirs → Repo → User.
+/// Priority order: Local (`cwd/.grok/{skills,commands}`,
+/// `cwd/.agents/{skills,commands}`) → Intermediate dirs → Repo → User.
 /// → additional paths from `config.paths`
 /// → Server (injected `config.server_skill_dirs`)
 /// → Bundled (injected `config.bundled_skill_dirs` + `~/.grok/bundled`; lowest precedence).
@@ -59,7 +59,8 @@ pub struct SkillsConfig {
 ///
 /// When `working_directory` is `None`, only User-scoped skills are returned.
 ///
-/// `compat` gates Cursor directories. Claude directories are build-disabled.
+/// Third-party vendor directories are disabled by the build-wide compatibility
+/// policy; `compat` remains a schema-compatible input for diagnostics.
 pub async fn list_skills(
     working_directory: Option<&str>,
     config: &SkillsConfig,
@@ -171,8 +172,8 @@ pub fn collect_skill_config_dirs(
         }
     };
 
-    // `.cursor` is gated by resolved compat and `.grok` is always present.
-    // Claude and Codex shared config directories are build-disabled.
+    // Native `.grok` and the original shared `.agents` skill/command root are
+    // always present; vendor-specific directories are build-disabled.
     let config_dir_names = compat.skill_config_dirs();
 
     // Priority 1 & 2: Walk from cwd up to the git root.
@@ -203,12 +204,13 @@ pub fn collect_skill_config_dirs(
     }
 
     // Priority 3: Global user dirs. `.grok` comes from `grok_home` (which may
-    // be overridden), so it's handled separately; `.cursor` is gated by its
-    // skills compat cell. The Codex shared `.agents` root is not probed.
+    // be overridden), while `.agents/{skills,commands}` is rooted at the
+    // actual user home so it remains a shared cross-agent location.
     try_add(grok_home);
     #[allow(deprecated)]
     if let Some(home) = std::env::home_dir() {
-        if compat.cursor.skills {
+        try_add(home.join(".agents"));
+        if xai_grok_config::CURSOR_COMPAT_ENABLED && compat.cursor.skills {
             try_add(home.join(".cursor"));
         }
     }
@@ -234,7 +236,7 @@ pub fn collect_skill_config_dirs(
 /// Determine the skill scope for a config directory based on its location
 /// relative to `cwd`, `git_root`, and the user's home directory.
 fn scope_for_config_dir(dir: &Path, cwd: Option<&Path>, git_root: Option<&Path>) -> SkillScope {
-    // Home-level dirs (e.g. ~/.grok/ and ~/.cursor/) are User scope.
+    // Home-level dirs (e.g. ~/.grok/ and ~/.agents/) are User scope.
     #[allow(deprecated)]
     if let Some(home) = std::env::home_dir()
         && dir.parent() == Some(home.as_path())
@@ -262,7 +264,8 @@ fn scope_for_config_dir(dir: &Path, cwd: Option<&Path>, git_root: Option<&Path>)
 /// Collect paths into `out`, deduplicating by canonical path.
 ///
 /// Skill/command discovery does **not** consult `.gitignore`. Auto-discovery
-/// only visits known config roots (`.grok`, `.cursor`),
+/// only visits the native `.grok` root and the original shared
+/// `.agents/{skills,commands}` root,
 /// which teams often gitignore as local-only config while still expecting them
 /// to load. Hiding a skill uses `[skills] ignore` in config, not repo ignore
 /// rules. AGENTS.md discovery still honors gitignore — that is content, not
@@ -346,16 +349,18 @@ fn expand_tilde(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
-/// Reject foreign/shared vendor state before any skill source is statted or
-/// traversed. `validate_grok_path` also resolves existing symlink ancestors,
-/// so an innocuous-looking alias cannot restore a blocked source.
+/// Reject proprietary vendor state before any skill source is statted or
+/// traversed, while permitting the original `.agents/skills` and
+/// `.agents/commands` sources.
+/// The validator also resolves existing symlink ancestors, so an
+/// innocuous-looking alias cannot restore a blocked source.
 fn is_allowed_skill_source_path(path: &Path) -> bool {
-    if xai_grok_config::validate_grok_path(path).is_some() {
+    if xai_grok_config::validate_skill_path(path).is_some() {
         return true;
     }
     tracing::warn!(
         path = %path.display(),
-        "refusing skill source under Claude/Codex vendor state"
+        "refusing skill source under third-party agent vendor state"
     );
     false
 }
@@ -1542,13 +1547,13 @@ mod tests {
     async fn explicit_skill_sources_reject_vendor_paths_and_symlink_aliases() {
         let tmp = tempfile::tempdir().unwrap();
         let grok_source = tmp.path().join(".grok").join("custom-skills");
-        let cursor_source = tmp.path().join(".cursor").join("custom-skills");
+        let agents_source = tmp.path().join(".agents").join("skills");
         write_skill_md(&grok_source.join("grok-safe"), "grok-safe");
-        write_skill_md(&cursor_source.join("cursor-safe"), "cursor-safe");
+        write_skill_md(&agents_source.join("agents-safe"), "agents-safe");
 
         let mut vendor_sources = Vec::new();
         let mut vendor_command_dirs = Vec::new();
-        for component in [".claude", ".codex", ".agents"] {
+        for component in [".claude", ".cursor", ".codex"] {
             let source = tmp.path().join(component).join("custom-skills");
             write_skill_md(&source.join("blocked"), "blocked");
             vendor_sources.push(source);
@@ -1566,7 +1571,7 @@ mod tests {
         let alias = tmp.path().join("apparently-safe-skills");
         std::os::unix::fs::symlink(&vendor_sources[2], &alias).unwrap();
 
-        let source_paths: Vec<String> = [grok_source.clone(), cursor_source.clone()]
+        let source_paths: Vec<String> = [grok_source.clone(), agents_source.clone()]
             .into_iter()
             .chain(vendor_sources.iter().cloned())
             .chain(std::iter::once(alias.clone()))
@@ -1578,7 +1583,7 @@ mod tests {
             collect_injected_skills(&source_paths, SkillScope::Bundled),
         ] {
             let names: HashSet<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
-            assert_eq!(names, HashSet::from(["grok-safe", "cursor-safe"]));
+            assert_eq!(names, HashSet::from(["grok-safe", "agents-safe"]));
         }
 
         let safe_commands = tmp.path().join("safe-commands");
@@ -1591,7 +1596,7 @@ mod tests {
         let registry = make_registry_with_sources(
             "guarded",
             &tmp.path().join("plugin-root"),
-            [grok_source, cursor_source]
+            [grok_source, agents_source]
                 .into_iter()
                 .chain(vendor_sources)
                 .chain(std::iter::once(alias))
@@ -1608,12 +1613,12 @@ mod tests {
             plugin_names,
             HashSet::from([
                 "grok-safe".to_string(),
-                "cursor-safe".to_string(),
+                "agents-safe".to_string(),
                 "safe-command".to_string(),
             ])
         );
 
-        let blocked_global = tmp.path().join(".agents").join("fake-grok-home");
+        let blocked_global = tmp.path().join(".codex").join("fake-grok-home");
         write_skill_md(
             &blocked_global
                 .join("bundled")
@@ -2409,8 +2414,8 @@ mod tests {
         )
         .expect("write .agents command");
         write_skill_md(
-            &agents_dir.join("skills").join("codex-skill"),
-            "codex-skill",
+            &agents_dir.join("skills").join("standard-skill"),
+            "standard-skill",
         );
 
         write_skill_md(
@@ -2438,12 +2443,12 @@ mod tests {
             "project .claude/skills must remain build-disabled, got: {names:?}"
         );
         assert!(
-            !names.contains(&"codex-command"),
-            "project .agents/commands must not be auto-read, got: {names:?}"
+            names.contains(&"codex-command"),
+            "project .agents/commands must retain original Grok support: {names:?}"
         );
         assert!(
-            !names.contains(&"codex-skill"),
-            "project .agents/skills must not be auto-read, got: {names:?}"
+            names.contains(&"standard-skill"),
+            "project .agents/skills must remain available as the shared standard: {names:?}"
         );
     }
 
@@ -2651,7 +2656,7 @@ mod tests {
         let ends_with = |dirs: &[PathBuf], suffix: &str| dirs.iter().any(|d| d.ends_with(suffix));
 
         // Manually mutating build-disabled vendor fields must not restore their
-        // automatic roots, while Cursor remains enabled.
+        // automatic roots; the shared `.agents` standard remains present.
         let mut compat = CompatConfig::default();
         compat.claude.skills = true;
         compat.codex.skills = true;
@@ -2661,12 +2666,12 @@ mod tests {
             "claude must remain build-disabled: {all:?}"
         );
         assert!(
-            !ends_with(&all, ".agents"),
-            "the Codex shared root must not be probed: {all:?}"
+            ends_with(&all, ".agents"),
+            "the shared Agent Skills root must be probed: {all:?}"
         );
-        assert!(ends_with(&all, ".cursor"), "cursor missing: {all:?}");
+        assert!(!ends_with(&all, ".cursor"), "cursor must stay off: {all:?}");
 
-        // cursor.skills off drops only Cursor; generic roots remain.
+        // Cursor stays disabled; native and shared standard roots remain.
         let mut compat = CompatConfig::default();
         compat.cursor.skills = false;
         let dirs = collect_skill_config_dirs(Some(cwd), None, tmp.path(), &[], compat);
@@ -2679,6 +2684,10 @@ mod tests {
             "claude must stay off: {dirs:?}"
         );
         assert!(ends_with(&dirs, ".grok"), "grok must remain: {dirs:?}");
+        assert!(
+            ends_with(&dirs, ".agents"),
+            "shared Agent Skills root must remain: {dirs:?}"
+        );
     }
 
     // ── Same-scope frontmatter-name collisions (copied skill dirs) ──────

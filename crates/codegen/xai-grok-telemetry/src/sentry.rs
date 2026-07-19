@@ -32,7 +32,7 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 pub fn init(config: Config) -> ClientInitGuard {
     let config = CONFIG.get_or_init(|| config);
 
-    if config.disabled {
+    if config.disabled || !xai_grok_config::ERROR_REPORTING_ENABLED {
         return sentry::init(ClientOptions::default());
     }
 

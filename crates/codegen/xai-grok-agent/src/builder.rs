@@ -97,9 +97,8 @@ pub struct AgentBuilder {
     subagent_toggle: HashMap<String, bool>,
     task_model_slugs: Vec<String>,
     skills_config: crate::prompt::skills::SkillsConfig,
-    /// Resolved vendor-compat config governing which vendor (`.claude`/`.cursor`)
-    /// dirs are scanned for skills / rules / AGENTS.md. Defaults to all-on,
-    /// which reproduces the historical behavior.
+    /// Resolved vendor-compat config governing third-party roots. All vendor
+    /// compatibility is disabled in this build.
     compat: xai_grok_tools::types::compat::CompatConfig,
     bash_params_json: Option<serde_json::Map<String, serde_json::Value>>,
     ask_user_question_params_json: Option<serde_json::Map<String, serde_json::Value>>,

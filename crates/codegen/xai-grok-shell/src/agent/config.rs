@@ -406,10 +406,12 @@ impl EndpointsConfig {
             && blank_as_unset(&self.otel_exporter_otlp_headers).is_some();
         endpoint_consumed || headers_consumed
     }
-    /// Trace export enabled unless `OTEL_TRACES_EXPORTER=none`. Deliberately
-    /// still honored by the internal pipeline even with `GROK_EXTERNAL_OTEL`
-    /// set: disabling internal span export is the safe direction.
+    /// Internal trace export is hard-disabled in this build. The legacy env
+    /// switch remains parsed for schema compatibility but cannot enable it.
     pub fn resolve_traces_export_enabled(&self) -> bool {
+        if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+            return false;
+        }
         !matches!(
             self.otel_traces_exporter.as_deref().map(str::trim),
             Some("none")
@@ -739,7 +741,7 @@ fn remote_compat_value(
 }
 /// Resolve vendor compatibility cells from TOML and remote settings.
 ///
-/// Claude and Codex compatibility are build-wide kill switches. Their cells
+/// Claude, Codex, and Cursor compatibility are build-wide kill switches. Their cells
 /// bypass every runtime source so env, TOML, and remote settings cannot
 /// re-enable them.
 fn resolve_compat_config(
@@ -1243,8 +1245,9 @@ pub struct StorageConfig {
 }
 /// `[paths]` configuration: extra directories to scan for skills, rules, etc.
 ///
-/// These supplement the native Grok scan locations. Paths inside `.claude`,
-/// `.codex`, or `.agents` state are rejected by the discovery boundary.
+/// These supplement the native Grok and shared Agent Skills scan locations.
+/// Paths inside `.claude`, `.cursor`, or `.codex` state are rejected by the
+/// discovery boundary.
 ///
 /// Example:
 /// ```toml
@@ -2057,6 +2060,9 @@ impl Config {
         self.resolve_two_pass_compaction().value
     }
     pub(crate) fn resolve_telemetry_mode(&self) -> Resolved<TelemetryMode> {
+        if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+            return Resolved::new(TelemetryMode::Disabled, ConfigSource::Default);
+        }
         if let Some(mode) = self.requirements.telemetry.pinned() {
             return Resolved::new(mode, ConfigSource::Requirement);
         }
@@ -2148,6 +2154,9 @@ impl Config {
         )
     }
     pub(crate) fn resolve_feedback(&self) -> Resolved<bool> {
+        if !xai_grok_config::FEEDBACK_ENABLED {
+            return Resolved::new(false, ConfigSource::Default);
+        }
         let ff = self
             .remote_settings
             .as_ref()
@@ -2925,17 +2934,22 @@ impl SyncBoolFlag {
     }
 }
 /// Sync slice of [`Config::resolve_telemetry_mode`] for use before the tokio
-/// runtime (e.g. `init_sentry`). `true` only when explicitly off.
+/// runtime (e.g. `init_sentry`). This fork always resolves to disabled.
 pub fn is_telemetry_disabled_sync() -> bool {
+    if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+        return true;
+    }
     !SyncBoolFlag::new(telemetry_enabled_from_toml)
         .disable_env("DISABLE_TELEMETRY")
         .enable_env(grok_telemetry_env_enabled)
         .resolve()
 }
-/// Like [`is_telemetry_disabled_sync`] but only `true` when telemetry is
-/// *explicitly* off; absence is not disabled (`.default(true)`) so remote-only
-/// enablement still builds the OTLP exporter (the runtime gate then governs it).
+/// Compatibility helper for callers that distinguish an explicit telemetry
+/// opt-out. The build-wide policy makes it unconditionally true here.
 pub fn is_telemetry_explicitly_disabled_sync() -> bool {
+    if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+        return true;
+    }
     !SyncBoolFlag::new(telemetry_enabled_from_toml)
         .disable_env("DISABLE_TELEMETRY")
         .enable_env(grok_telemetry_env_enabled)
@@ -2945,6 +2959,9 @@ pub fn is_telemetry_explicitly_disabled_sync() -> bool {
 /// Sync sibling of [`is_telemetry_disabled_sync`] scoped to Sentry. Inherits
 /// from telemetry when no Sentry-specific signal is set.
 pub fn is_error_reporting_disabled_sync() -> bool {
+    if !xai_grok_config::ERROR_REPORTING_ENABLED {
+        return true;
+    }
     !SyncBoolFlag::new(error_reporting_enabled_from_toml)
         .disable_env("DISABLE_ERROR_REPORTING")
         .enable_env(|| env_bool("GROK_ERROR_REPORTING"))
@@ -7862,12 +7879,12 @@ reasoning_effort = "low"
     }
     #[test]
     #[serial]
-    fn resolve_feedback_defaults_to_true_when_unset() {
+    fn resolve_feedback_defaults_to_build_disabled() {
         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
         let cfg = Config::default();
         let r = cfg.resolve_feedback();
-        assert!(r.value, "feedback should be true by default");
+        assert!(!r.value, "feedback is hard-disabled in this build");
         assert_eq!(r.source, ConfigSource::Default);
     }
     #[test]
@@ -8089,7 +8106,7 @@ reasoning_effort = "low"
     }
     #[test]
     #[serial]
-    fn resolve_feedback_env_overrides_all() {
+    fn resolve_feedback_rejects_env_enable() {
         unsafe { std::env::set_var("GROK_FEEDBACK_ENABLED", "true") };
         let mut cfg = Config::default();
         cfg.features.feedback = Some(false);
@@ -8098,13 +8115,13 @@ reasoning_effort = "low"
             ..Default::default()
         });
         let r = cfg.resolve_feedback();
-        assert_eq!(r.source, ConfigSource::Env);
-        assert!(r.value);
+        assert_eq!(r.source, ConfigSource::Default);
+        assert!(!r.value);
         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
     }
     #[test]
     #[serial]
-    fn resolve_feedback_config_overrides_remote_settings() {
+    fn resolve_feedback_rejects_config_enable() {
         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
         let mut cfg = Config::default();
         cfg.features.feedback = Some(true);
@@ -8113,12 +8130,12 @@ reasoning_effort = "low"
             ..Default::default()
         });
         let r = cfg.resolve_feedback();
-        assert_eq!(r.source, ConfigSource::Config);
-        assert!(r.value);
+        assert_eq!(r.source, ConfigSource::Default);
+        assert!(!r.value);
     }
     #[test]
     #[serial]
-    fn resolve_feedback_remote_settings_used_when_no_local() {
+    fn resolve_feedback_rejects_remote_enable() {
         unsafe { std::env::remove_var("GROK_FEEDBACK_ENABLED") };
         let cfg = Config {
             remote_settings: Some(crate::util::config::RemoteSettings {
@@ -8128,8 +8145,21 @@ reasoning_effort = "low"
             ..Default::default()
         };
         let r = cfg.resolve_feedback();
-        assert_eq!(r.source, ConfigSource::Remote);
-        assert!(r.value);
+        assert_eq!(r.source, ConfigSource::Default);
+        assert!(!r.value);
+    }
+    #[test]
+    fn resolve_aggregate_telemetry_rejects_runtime_enablement() {
+        let mut cfg = Config::default();
+        cfg.features.telemetry = Some(TelemetryMode::Enabled);
+        cfg.remote_settings = Some(crate::util::config::RemoteSettings {
+            telemetry_enabled: Some(true),
+            ..Default::default()
+        });
+        let resolved = cfg.resolve_telemetry_mode();
+        assert_eq!(resolved.value, TelemetryMode::Disabled);
+        assert_eq!(resolved.source, ConfigSource::Default);
+        assert!(!cfg.is_telemetry_enabled());
     }
     #[test]
     #[serial]
@@ -9880,15 +9910,10 @@ agent_type = "cursor"
         let raw: toml::Value = toml::from_str(source).unwrap();
         raw.get("compat").unwrap().clone().try_into().unwrap()
     }
-    fn assert_session_one_disabled(config: CompatConfig, expected: CompatVendor) {
+    fn assert_all_compat_sessions_off(config: CompatConfig) {
         for cell in COMPAT_CELLS {
             if cell.surface() == CompatSurface::Sessions {
-                assert_eq!(
-                    config.value(cell),
-                    cell.vendor() == CompatVendor::Cursor && cell.vendor() != expected,
-                    "{}.sessions",
-                    cell.vendor().as_str()
-                );
+                assert!(!config.value(cell), "{}.sessions", cell.vendor().as_str());
             }
         }
     }
@@ -10007,13 +10032,9 @@ sessions = true"#,
     #[serial]
     fn resolve_compat_toml_sessions_disable_independently() {
         let _env = isolate_compat_env();
-        for (vendor, section) in [
-            (CompatVendor::Cursor, "cursor"),
-            (CompatVendor::Claude, "claude"),
-            (CompatVendor::Codex, "codex"),
-        ] {
+        for section in ["cursor", "claude", "codex"] {
             let config = parse_compat(&format!("[compat.{section}]\nsessions = false"));
-            assert_session_one_disabled(resolve_compat_config(&config, None), vendor);
+            assert_all_compat_sessions_off(resolve_compat_config(&config, None));
         }
     }
     #[test]
@@ -10127,7 +10148,7 @@ hooks = true
             ..Default::default()
         };
         let resolved = resolve_compat_sessions_from_raw(Ok(&raw), Some(&remote));
-        assert!(resolved.cursor.sessions);
+        assert!(!resolved.cursor.sessions);
         assert!(!resolved.claude.sessions);
         assert!(!resolved.codex.sessions);
     }
@@ -10151,7 +10172,7 @@ hooks = true
             }
         }
         let remote = remote_settings_with(CompatRemoteKey::CursorSkills, false);
-        assert!(CompatConfig::default().cursor.skills);
+        assert!(!CompatConfig::default().cursor.skills);
         assert!(
             !resolve_compat_config(&CompatConfigToml::default(), Some(&remote))
                 .cursor
@@ -10162,16 +10183,16 @@ hooks = true
     #[serial]
     fn resolve_compat_env_sessions_disable_independently() {
         let _env = isolate_compat_env();
-        for (vendor, env_var) in [
-            (CompatVendor::Cursor, "GROK_CURSOR_SESSIONS_ENABLED"),
-            (CompatVendor::Claude, "GROK_CLAUDE_SESSIONS_ENABLED"),
-            (CompatVendor::Codex, "GROK_CODEX_SESSIONS_ENABLED"),
+        for env_var in [
+            "GROK_CURSOR_SESSIONS_ENABLED",
+            "GROK_CLAUDE_SESSIONS_ENABLED",
+            "GROK_CODEX_SESSIONS_ENABLED",
         ] {
             let _disabled = EnvGuard::set(env_var, "false");
-            assert_session_one_disabled(
-                resolve_compat_config(&CompatConfigToml::default(), None),
-                vendor,
-            );
+            assert_all_compat_sessions_off(resolve_compat_config(
+                &CompatConfigToml::default(),
+                None,
+            ));
         }
     }
     #[test]
@@ -10187,12 +10208,12 @@ hooks = true
         let resolved = resolve_compat_config(&config, Some(&remote));
         assert!(!resolved.cursor.sessions);
         assert!(!resolved.codex.hooks);
-        assert!(resolved.cursor.hooks);
+        assert!(!resolved.cursor.hooks);
         assert!(!resolved.claude.hooks);
         let _session = EnvGuard::set("GROK_CURSOR_SESSIONS_ENABLED", "true");
         let _hook = EnvGuard::set("GROK_CODEX_HOOKS_ENABLED", "true");
         let resolved = resolve_compat_config(&config, Some(&remote));
-        assert!(resolved.cursor.sessions);
+        assert!(!resolved.cursor.sessions);
         assert!(!resolved.codex.hooks);
     }
     #[test]
@@ -10499,16 +10520,19 @@ telemetry = "garbage"
     }
     #[test]
     #[serial]
-    fn is_telemetry_explicitly_disabled_sync_env_signals() {
+    fn telemetry_and_error_reporting_sync_gates_ignore_env_enablement() {
         unsafe { std::env::set_var("GROK_TELEMETRY_ENABLED", "0") };
         unsafe { std::env::remove_var("DISABLE_TELEMETRY") };
         assert!(is_telemetry_explicitly_disabled_sync());
         unsafe { std::env::set_var("GROK_TELEMETRY_ENABLED", "1") };
-        assert!(!is_telemetry_explicitly_disabled_sync());
+        assert!(is_telemetry_explicitly_disabled_sync());
+        unsafe { std::env::set_var("GROK_ERROR_REPORTING", "1") };
+        assert!(is_error_reporting_disabled_sync());
         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
         unsafe { std::env::set_var("DISABLE_TELEMETRY", "1") };
         assert!(is_telemetry_explicitly_disabled_sync());
         unsafe { std::env::remove_var("DISABLE_TELEMETRY") };
+        unsafe { std::env::remove_var("GROK_ERROR_REPORTING") };
     }
     #[test]
     fn version_overrides_apply_into_typed_config() {

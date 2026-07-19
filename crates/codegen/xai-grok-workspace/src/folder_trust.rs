@@ -342,11 +342,10 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     if cwd.join(".grok").join("lsp.json").is_file() {
         hit!("lsp");
     }
-    // Project `.cursor/mcp.json` — vendor MCP loading is default-on and tagged
-    // `Project`, so a repo shipping ONLY this file must still be gated. (File
-    // presence is enough; if the `.cursor` compat flag is off the servers won't
-    // spawn and gating is a harmless no-op.)
-    if cwd.join(".cursor").join("mcp.json").is_file() {
+    // Cursor MCP compatibility is build-disabled; never probe its state.
+    if xai_grok_config::CURSOR_COMPAT_ENABLED
+        && cwd.join(".cursor").join("mcp.json").is_file()
+    {
         hit!("mcp");
     }
     // Project `.envrc` — auto-sourced in a bash subshell when `direnv` isn't
@@ -375,7 +374,8 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     // gate" check.
     let hook_root = chain.git_root.as_deref().unwrap_or(cwd);
     if path_present_or_uncertain(&hook_root.join(".grok").join("hooks"))
-        || hook_root.join(".cursor").join("hooks.json").is_file()
+        || (xai_grok_config::CURSOR_COMPAT_ENABLED
+            && hook_root.join(".cursor").join("hooks.json").is_file())
     {
         hit!("hooks");
     }
@@ -579,12 +579,12 @@ mod tests {
     }
 
     #[test]
-    fn repo_configs_present_detects_cursor_mcp_json() {
+    fn repo_configs_present_ignores_cursor_mcp_json() {
         let tmp = repo_tmp();
         let cursor = tmp.path().join(".cursor");
         std::fs::create_dir_all(&cursor).unwrap();
         std::fs::write(cursor.join("mcp.json"), "{}").unwrap();
-        assert!(repo_configs_present(tmp.path()));
+        assert!(!repo_configs_present(tmp.path()));
     }
 
     #[test]

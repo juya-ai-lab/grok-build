@@ -48,10 +48,11 @@ const DEBOUNCE_MS: u64 = 100;
 
 use crate::event::FsEventKind;
 
-/// Foreign/shared state is never part of a Grok workspace watch. This is a
-/// hard boundary, not a user-configurable ignore: custom `!` include globs must
-/// not be able to restore these paths.
-const VENDOR_STATE_DIR_NAMES: [&str; 3] = [".claude", ".codex", ".agents"];
+/// Proprietary foreign-agent state is never part of a Grok workspace watch.
+/// This is a hard boundary, not a user-configurable ignore: custom `!` include
+/// globs must not be able to restore these paths. The vendor-neutral
+/// `.agents` namespace remains ordinary workspace content.
+const VENDOR_STATE_DIR_NAMES: [&str; 3] = [".claude", ".codex", ".cursor"];
 const CLAUDE_JSON_NAME: &str = ".claude.json";
 
 #[cfg(not(windows))]
@@ -70,8 +71,7 @@ fn os_component_eq(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
 /// Vendor roots are rejected wherever they occur as a path component. Treat
 /// `.claude.json` the same way even though it is normally a file: a directory
 /// with that name must not become a loophole. Other hidden directories (for
-/// example `.grok`, `.cursor`, and `.config`) remain eligible for normal
-/// watcher behavior.
+/// example `.grok` and `.config`) remain eligible for normal watcher behavior.
 fn has_explicit_vendor_state_name(path: &Path) -> bool {
     path.components().any(|component| {
         VENDOR_STATE_DIR_NAMES
@@ -1937,7 +1937,7 @@ mod tests {
             assert_eq!(
                 handle.watch_count(),
                 5 + per_dir_vcs_watch_count(&root),
-                "only root plus .grok/.cursor and their children should be armed"
+                "only root plus .grok/.agents and their children should be armed"
             );
             for dir in [".claude", ".codex", ".agents", ".grok", ".cursor"] {
                 fs::write(root.join(dir).join("nested/existing.txt"), "after").unwrap();
@@ -1955,7 +1955,7 @@ mod tests {
             );
             for safe in [
                 Path::new(".grok/nested/existing.txt"),
-                Path::new(".cursor/nested/existing.txt"),
+                Path::new(".agents/nested/existing.txt"),
             ] {
                 assert!(
                     paths.iter().any(|path| path.ends_with(safe)),
@@ -2001,8 +2001,8 @@ mod tests {
             );
             assert_eq!(
                 handle.watch_count(),
-                4 + per_dir_vcs_watch_count(&root),
-                "runtime arming should include workspace/.grok/.cursor, never vendor dirs"
+                5 + per_dir_vcs_watch_count(&root),
+                "runtime arming should include workspace/.agents and .grok, never vendor dirs"
             );
 
             for file in [
@@ -2028,7 +2028,7 @@ mod tests {
             );
             for safe in [
                 Path::new(".grok/visible.txt"),
-                Path::new(".cursor/visible.txt"),
+                Path::new("workspace/.agents/nested/secret.txt"),
                 Path::new("workspace/visible.txt"),
             ] {
                 assert!(
@@ -3715,7 +3715,7 @@ mod tests {
                 ".claude.json directory component must be a hard exclusion: {dirs:?}"
             );
             assert!(contains_name(&dirs, ".grok"), "safe hidden dir: {dirs:?}");
-            assert!(contains_name(&dirs, ".cursor"), "safe hidden dir: {dirs:?}");
+            assert!(contains_name(&dirs, ".agents"), "safe hidden dir: {dirs:?}");
         }
 
         #[test]
@@ -3925,7 +3925,7 @@ mod tests {
                     .any(|blocked| name.split('/').any(|part| part == *blocked))),
                 "vendor subtrees must be pruned before descent: {names:?}"
             );
-            for safe in [".grok", ".grok/cache", ".cursor", ".cursor/rules"] {
+            for safe in [".grok", ".grok/cache", ".agents", ".agents/deep"] {
                 assert!(names.contains(&safe.to_string()), "{safe}: {names:?}");
             }
         }

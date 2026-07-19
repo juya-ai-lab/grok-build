@@ -188,10 +188,10 @@ pub struct FeedbackManagerConfig {
     /// Interval for syncing signals to the analytics backend (default: 30s)
     pub sync_interval: Duration,
     /// Whether user-facing feedback features are enabled (popups, `/feedback`,
-    /// ratings). Gated by `GROK_FEEDBACK_ENABLED`.
+    /// ratings). Hard-disabled by the build-wide feedback policy in this fork.
     pub feedback_enabled: bool,
     /// Whether session analytics (signal sync, turn deltas) are enabled.
-    /// Gated by `GROK_TELEMETRY_ENABLED`. These are analytics data that
+    /// Gated by the build-wide telemetry policy. These are analytics data that
     /// flow continuously without user action.
     pub telemetry_enabled: bool,
     /// Client type (Agent, Tui, Web, Extension)
@@ -247,15 +247,21 @@ impl FeedbackManager {
     pub fn new(
         session_id: impl Into<String>,
         feedback_client: Option<FeedbackClient>,
-        config: FeedbackManagerConfig,
+        mut config: FeedbackManagerConfig,
     ) -> Self {
+        if !cfg!(test) {
+            config.feedback_enabled &= xai_grok_config::FEEDBACK_ENABLED;
+            config.telemetry_enabled &= xai_grok_config::AGGREGATE_TELEMETRY_ENABLED;
+        }
         let (signals_handle, actor) = SessionSignalsActor::with_sync_interval(config.sync_interval);
 
         // Spawn the signals actor
         tokio::spawn(actor.run());
 
         let session_id = session_id.into();
-        let feedback_client = feedback_client.map(|c| c.with_session_id(session_id.clone()));
+        let feedback_client = feedback_client
+            .filter(|_| config.feedback_enabled || config.telemetry_enabled)
+            .map(|c| c.with_session_id(session_id.clone()));
         tracing::info!(
             session_id = %session_id,
             feedback_enabled = config.feedback_enabled,

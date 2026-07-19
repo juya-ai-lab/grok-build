@@ -236,12 +236,13 @@ pub(crate) enum ForeignPickerSource {
 
 impl ForeignPickerSource {
     // This is deliberately the effective, build-enabled set rather than every
-    // variant in `ForeignSessionTool`.
-    const ALL: [Self; 1] = [Self::Cursor];
+    // variant in `ForeignSessionTool`. This build has no foreign-session
+    // compatibility sources.
+    const ALL: [Self; 0] = [];
 
     pub(crate) fn from_tool(tool: ForeignSessionTool) -> Option<Self> {
         match tool {
-            ForeignSessionTool::Cursor => Some(Self::Cursor),
+            ForeignSessionTool::Cursor => None,
             ForeignSessionTool::Claude | ForeignSessionTool::Codex => None,
         }
     }
@@ -254,7 +255,6 @@ impl ForeignPickerSource {
 
     pub(crate) fn from_picker_source(source: &str) -> Option<Self> {
         match source {
-            "cursor" => Some(Self::Cursor),
             _ => None,
         }
     }
@@ -303,6 +303,7 @@ impl ForeignPickerSource {
 fn clamp_compat(mut compat: EnabledForeignSessionSources) -> EnabledForeignSessionSources {
     compat.claude &= xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED;
     compat.codex &= xai_grok_config::CODEX_COMPAT_ENABLED;
+    compat.cursor &= xai_grok_config::CURSOR_COMPAT_ENABLED;
     compat
 }
 
@@ -786,23 +787,10 @@ mod tests {
     }
 
     #[test]
-    fn source_mapping_owns_badges_and_prompts() {
-        let source = ForeignPickerSource::Cursor;
-        assert_eq!(ForeignPickerSource::ALL, [source]);
-        assert_eq!(source.picker_source(), "cursor");
-        assert_eq!(
-            source.resume_prompt("native-id"),
-            "/resume-cursor native-id"
-        );
-        assert_eq!(
-            ForeignPickerSource::from_picker_source("cursor"),
-            Some(source)
-        );
-        assert_eq!(
-            ForeignPickerSource::from_tool(ForeignSessionTool::Cursor),
-            Some(source)
-        );
+    fn source_mapping_has_no_build_enabled_foreign_sources() {
+        assert!(ForeignPickerSource::ALL.is_empty());
         for (wire, tool) in [
+            ("cursor", ForeignSessionTool::Cursor),
             ("claude", ForeignSessionTool::Claude),
             ("codex", ForeignSessionTool::Codex),
         ] {
@@ -816,43 +804,23 @@ mod tests {
     }
 
     #[test]
-    fn summary_mapping_accepts_only_cursor_store_variants() {
-        for (tool, store_source, picker_source) in [
+    fn summary_mapping_rejects_every_foreign_store_variant() {
+        for (tool, store_source) in [
             (
                 ForeignSessionTool::Cursor,
                 ForeignSessionSource::CursorDesktop,
-                "cursor",
             ),
             (
                 ForeignSessionTool::Cursor,
                 ForeignSessionSource::CursorCli,
-                "cursor",
             ),
-        ] {
-            let entry = map_summary(ForeignSessionSummary {
-                tool,
-                source: store_source,
-                native_id: "id".into(),
-                title: "title".into(),
-                cwd: PathBuf::from("/work/repo"),
-                updated_at: UNIX_EPOCH + Duration::from_secs(42),
-                branch: Some("main".into()),
-            })
-            .expect("Cursor summary remains enabled");
-            assert_eq!(entry.source, picker_source);
-            assert_eq!(entry.id, "id");
-            assert_eq!(entry.repo_name, "work-repo");
-            assert_eq!(entry.branch.as_deref(), Some("main"));
-            assert_eq!(entry.last_active_at, Some(entry.updated_at));
-        }
-        for (tool, source) in [
             (ForeignSessionTool::Claude, ForeignSessionSource::ClaudeCode),
             (ForeignSessionTool::Codex, ForeignSessionSource::CodexCli),
         ] {
             assert!(
                 map_summary(ForeignSessionSummary {
                     tool,
-                    source,
+                    source: store_source,
                     native_id: "blocked".into(),
                     title: "blocked".into(),
                     cwd: PathBuf::from("/work/repo"),

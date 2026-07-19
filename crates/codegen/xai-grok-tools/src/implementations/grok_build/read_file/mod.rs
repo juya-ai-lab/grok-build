@@ -143,6 +143,9 @@ pub struct ReadFileInput {
     pub format: Option<String>,
 }
 async fn cursor_rules_on_read_enabled(resources: &SharedResources) -> bool {
+    if !xai_grok_config::CURSOR_COMPAT_ENABLED && !cfg!(test) {
+        return false;
+    }
     let res = resources.lock().await;
     res.get::<Params<ReadFileParams>>()
         .is_some_and(|p| p.0.cursor_rules_on_read)

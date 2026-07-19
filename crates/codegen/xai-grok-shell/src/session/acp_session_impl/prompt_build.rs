@@ -530,11 +530,13 @@ impl SessionActor {
                 vec![
                     (
                         home_dir.join(".claude"),
-                        self.rebuild_spec.compat.claude.agents,
+                        xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED
+                            && self.rebuild_spec.compat.claude.agents,
                     ),
                     (
                         home_dir.join(".cursor"),
-                        self.rebuild_spec.compat.cursor.agents,
+                        xai_grok_config::CURSOR_COMPAT_ENABLED
+                            && self.rebuild_spec.compat.cursor.agents,
                     ),
                 ]
             })

@@ -475,6 +475,9 @@ impl MvpAgent {
     }
     /// Build a `FeedbackClient` with resolved feedback URL and credentials.
     pub(crate) fn feedback_client(&self) -> Option<FeedbackClient> {
+        if !xai_grok_config::FEEDBACK_ENABLED {
+            return None;
+        }
         let (base_url, user_token, alpha_test_key, deployment_key) = self
             .feedback_credentials()?;
         Some(

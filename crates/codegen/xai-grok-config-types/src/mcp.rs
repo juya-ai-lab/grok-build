@@ -468,6 +468,9 @@ pub struct RelaySyncConfig {
 impl RelaySyncConfig {
     /// Check if relay sync is enabled. Env var takes precedence over config.
     pub fn is_enabled(&self) -> bool {
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            return false;
+        }
         if let Ok(env_val) = std::env::var("GROK_RELAY_SYNC_ENABLED") {
             return env_val.eq_ignore_ascii_case("true") || env_val == "1";
         }

@@ -23,9 +23,10 @@ Grok checks for these filenames (in this order) within each directory:
 Grok loads every matching file in a directory. On case-insensitive filesystems,
 names that resolve to the same file (such as `Agents.md` and `AGENTS.md`) are
 deduplicated and counted once. This build does not recognize Claude-specific
-instruction filenames or scan `.claude`/`.agents` state. With Cursor
-compatibility enabled, the home-level `~/.cursor/` directory is scanned for the
-generic names above.
+instruction filenames or scan `.claude`, `.cursor`, `.codex`, or `.agents`
+state for project instructions. Original `.agents/skills` and
+`.agents/commands` discovery remains supported, but `.agents/rules` is not
+introduced by this fork.
 
 ### Rules Directories
 
@@ -34,10 +35,9 @@ In addition to AGENTS.md files, Grok scans for `*.md` files in rules directories
 | Location | Notes |
 |----------|-------|
 | `<dir>/.grok/rules/` | Always scanned |
-| `<dir>/.cursor/rules/` | Cursor compatibility (configurable) |
+| `<dir>/.cursor/rules/` | Disabled in this build |
 
-Claude and Codex rules are compile-time disabled. Cursor rule discovery remains
-configurable; see [Configuration](05-configuration.md#harness-compatibility).
+Claude, Cursor, and Codex rule discovery is disabled at compile time.
 
 ---
 
@@ -45,7 +45,7 @@ configurable; see [Configuration](05-configuration.md#harness-compatibility).
 
 Grok scans for project rules in this order:
 
-1. **Home rules**: `$GROK_HOME`, then enabled `~/.cursor/` sources
+1. **Home rules**: `$GROK_HOME`
 2. **Repo rules**: If inside a git repo, every directory from the repo root down to the current working directory (inclusive)
 3. **CWD-only**: If not inside a git repo, only the current working directory
 

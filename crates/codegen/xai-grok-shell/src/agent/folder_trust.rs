@@ -401,7 +401,8 @@ fn compute_from_inputs(
 ///
 /// Sources: project `.grok/config.toml [mcp_servers]` (NOT the user-tier global
 /// config), project `.mcp.json` (`cwd` up to the repo root, never `$HOME`),
-/// project `.cursor/mcp.json`, and `~/.claude.json projects.<cwd>.mcpServers`.
+/// and `~/.claude.json projects.<cwd>.mcpServers`. Cursor MCP compatibility is
+/// build-disabled.
 ///
 /// Edge case: a name declared in BOTH a project config and the global
 /// `~/.grok/config.toml` is dropped when untrusted. This is intended — untrusted
@@ -422,11 +423,11 @@ pub fn project_scoped_mcp_names(cwd: &Path) -> HashSet<String> {
         names.insert(mcp_server_name(&server).to_string());
     }
 
-    // Project `.cursor/mcp.json` only — `load_cursor_mcp_servers` would also
-    // merge the user-scoped `~/.cursor/mcp.json`, so read the project file
-    // directly instead.
-    for server in crate::util::config::load_mcp_json_file(&cwd.join(".cursor").join("mcp.json")) {
-        names.insert(mcp_server_name(&server).to_string());
+    if xai_grok_config::CURSOR_COMPAT_ENABLED {
+        for server in crate::util::config::load_mcp_json_file(&cwd.join(".cursor").join("mcp.json"))
+        {
+            names.insert(mcp_server_name(&server).to_string());
+        }
     }
 
     // `~/.claude.json projects.<cwd>.mcpServers` object keys.
@@ -1216,8 +1217,8 @@ mod tests {
 
     /// Pins the three known repo-local FILE sources of
     /// [`project_scoped_mcp_names`]: a project server declared in each of
-    /// `.grok/config.toml`, `.mcp.json`, and `.cursor/mcp.json` must appear in
-    /// the returned set, catching a REGRESSION that drops one of them. It cannot
+    /// `.grok/config.toml` and `.mcp.json` must appear in the returned set,
+    /// while build-disabled Cursor state must not. This cannot
     /// catch a brand-new source TYPE added only to a loader — the prominent
     /// single-source-of-truth doc on `project_scoped_mcp_names` is that guard.
     /// (`~/.claude.json` is excluded — it lives under `$HOME` and a test must not
@@ -1246,12 +1247,13 @@ mod tests {
         .unwrap();
 
         let names = project_scoped_mcp_names(tmp.path());
-        for expected in ["cfgsrv", "jsonsrv", "cursorsrv"] {
+        for expected in ["cfgsrv", "jsonsrv"] {
             assert!(
                 names.contains(expected),
                 "project_scoped_mcp_names missing {expected:?} — a project MCP source is no longer gated; got {names:?}"
             );
         }
+        assert!(!names.contains("cursorsrv"));
     }
 
     #[test]

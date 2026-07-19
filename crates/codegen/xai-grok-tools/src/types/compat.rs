@@ -5,14 +5,14 @@
 //! ".claude", ".cursor"]` (and `RULES_DIRS` / `AGENT_FILENAMES`) across ~6
 //! call sites in three crates. This module now owns the canonical cell registry
 //! used by runtime resolution and diagnostics (env var → config TOML → remote
-//! setting → compiled default). Claude and Codex compatibility are
-//! build-disabled and cannot be re-enabled by runtime inputs.
+//! setting → compiled default). Third-party compatibility is build-disabled
+//! and cannot be re-enabled by runtime inputs.
 //!
 //! Two forms:
 //! - [`CompatConfigToml`] — raw, parsed from the `[compat]` TOML section. Each
 //!   cell is `Option<bool>` so `None` falls through to the resolution chain.
-//! - [`CompatConfig`] — resolved plain bools consumed at runtime. Cursor cells
-//!   default on; every Claude and Codex cell is forced off.
+//! - [`CompatConfig`] — resolved plain bools consumed at runtime. Every
+//!   third-party vendor cell is forced off in this build.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,7 +35,7 @@ impl CompatVendor {
     /// Whether this vendor's compatibility layer is enabled in this build.
     pub const fn is_build_enabled(self) -> bool {
         match self {
-            Self::Cursor => true,
+            Self::Cursor => xai_grok_config::CURSOR_COMPAT_ENABLED,
             Self::Claude => xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED,
             Self::Codex => xai_grok_config::CODEX_COMPAT_ENABLED,
         }
@@ -123,11 +123,11 @@ impl CompatCell {
 
     /// Whether Grok currently implements this compatibility surface.
     ///
-    /// Claude and Codex cells are build-disabled. Codex non-session cells remain
-    /// reserved in the registry so their config shape is stable.
+    /// All third-party cells are build-disabled. The registry remains so the
+    /// raw config shape and diagnostics stay stable without activating reads.
     pub const fn is_runtime_supported(self) -> bool {
         match self.vendor {
-            CompatVendor::Cursor => true,
+            CompatVendor::Cursor => self.vendor.is_build_enabled(),
             CompatVendor::Claude => self.vendor.is_build_enabled(),
             CompatVendor::Codex => {
                 self.vendor.is_build_enabled() && matches!(self.surface, CompatSurface::Sessions)
@@ -349,8 +349,8 @@ impl Default for VendorCompat {
 
 /// Resolved `[compat]` configuration threaded into compatibility consumers.
 ///
-/// Claude and Codex cells are build-disabled. Cursor cells default on; Codex's
-/// non-session cells remain reserved in the registry.
+/// All third-party cells are build-disabled. The vendor sections remain
+/// schema-compatible, but their resolved values are always false.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompatConfig {
     pub cursor: VendorCompat,
@@ -361,7 +361,7 @@ pub struct CompatConfig {
 impl Default for CompatConfig {
     fn default() -> Self {
         Self {
-            cursor: VendorCompat::default(),
+            cursor: VendorCompat::with_all(xai_grok_config::CURSOR_COMPAT_ENABLED),
             claude: VendorCompat::with_all(xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED),
             codex: VendorCompat::with_all(xai_grok_config::CODEX_COMPAT_ENABLED),
         }
@@ -371,7 +371,9 @@ impl Default for CompatConfig {
 impl CompatConfig {
     pub fn value(&self, cell: CompatCell) -> bool {
         match cell.vendor() {
-            CompatVendor::Cursor => self.cursor.value(cell.surface()),
+            CompatVendor::Cursor => {
+                xai_grok_config::CURSOR_COMPAT_ENABLED && self.cursor.value(cell.surface())
+            }
             CompatVendor::Claude => {
                 xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED && self.claude.value(cell.surface())
             }
@@ -383,7 +385,10 @@ impl CompatConfig {
 
     pub fn set(&mut self, cell: CompatCell, value: bool) {
         match cell.vendor() {
-            CompatVendor::Cursor => self.cursor.set(cell.surface(), value),
+            CompatVendor::Cursor => self.cursor.set(
+                cell.surface(),
+                value && xai_grok_config::CURSOR_COMPAT_ENABLED,
+            ),
             CompatVendor::Claude => self.claude.set(
                 cell.surface(),
                 value && xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED,
@@ -396,22 +401,21 @@ impl CompatConfig {
     }
 
     /// Config directories that may contain `skills/` subdirectories, in
-    /// priority order. `.grok` is always included and `.cursor` is gated on
-    /// its `skills` cell. Claude and Codex shared paths are never recognized.
+    /// priority order. Native `.grok` and the shared Agent Skills standard
+    /// root `.agents` are always included. Vendor-specific paths are excluded.
     pub fn skill_config_dirs(&self) -> Vec<&'static str> {
-        let mut dirs = vec![".grok"];
-        if self.cursor.skills {
+        let mut dirs = vec![".grok", ".agents"];
+        if xai_grok_config::CURSOR_COMPAT_ENABLED && self.cursor.skills {
             dirs.push(".cursor");
         }
         dirs
     }
 
     /// Subdirectories scanned for `*.md` rules files. `.grok/rules` is always
-    /// included; `.cursor/rules` is gated on its `rules` cell. Claude paths are
-    /// never recognized.
+    /// included; third-party vendor paths are never recognized.
     pub fn rules_dirs(&self) -> Vec<&'static str> {
         let mut dirs = vec![".grok/rules"];
-        if self.cursor.rules {
+        if xai_grok_config::CURSOR_COMPAT_ENABLED && self.cursor.rules {
             dirs.push(".cursor/rules");
         }
         dirs
@@ -424,10 +428,10 @@ impl CompatConfig {
     }
 
     /// Home-level vendor directories scanned for project instructions and
-    /// rules. Only `.cursor` is eligible; Claude paths are never recognized.
+    /// rules. Third-party vendor paths are never recognized.
     pub fn agents_home_dirs(&self) -> Vec<&'static str> {
         let mut dirs = Vec::new();
-        if self.cursor.agents {
+        if xai_grok_config::CURSOR_COMPAT_ENABLED && self.cursor.agents {
             dirs.push(".cursor");
         }
         dirs
@@ -472,21 +476,20 @@ mod tests {
             ]
         );
 
+        assert!(!xai_grok_config::CURSOR_COMPAT_ENABLED);
         assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
         assert!(!xai_grok_config::CODEX_COMPAT_ENABLED);
         let defaults = CompatConfig::default();
         for cell in COMPAT_CELLS {
-            assert_eq!(
-                defaults.value(cell),
-                cell.vendor() == CompatVendor::Cursor,
+            assert!(
+                !defaults.value(cell),
                 "{}.{}",
                 cell.vendor().as_str(),
                 cell.surface().as_str()
             );
         }
         let vendor = defaults.cursor;
-        assert!(vendor.skills && vendor.rules && vendor.agents);
-        assert!(vendor.mcps && vendor.hooks && vendor.sessions);
+        assert_eq!(vendor, VendorCompat::with_all(false));
         assert_eq!(defaults.claude, VendorCompat::with_all(false));
         assert_eq!(defaults.codex, VendorCompat::with_all(false));
 
@@ -496,24 +499,14 @@ mod tests {
                 .filter(|cell| cell.is_runtime_supported())
                 .map(|cell| (cell.vendor().as_str(), cell.surface().as_str()))
                 .collect::<Vec<_>>(),
-            [
-                ("cursor", "skills"),
-                ("cursor", "rules"),
-                ("cursor", "agents"),
-                ("cursor", "mcps"),
-                ("cursor", "hooks"),
-                ("cursor", "sessions"),
-            ]
+            Vec::<(&str, &str)>::new()
         );
     }
 
     #[test]
     fn build_disabled_cells_cannot_be_enabled_through_resolved_config() {
         let mut config = CompatConfig::default();
-        for cell in COMPAT_CELLS
-            .into_iter()
-            .filter(|cell| cell.vendor() != CompatVendor::Cursor)
-        {
+        for cell in COMPAT_CELLS {
             config.set(cell, true);
             assert!(
                 !config.value(cell),
@@ -524,13 +517,14 @@ mod tests {
         }
         assert_eq!(config.claude, VendorCompat::with_all(false));
         assert_eq!(config.codex, VendorCompat::with_all(false));
+        assert_eq!(config.cursor, VendorCompat::with_all(false));
     }
 
     #[test]
-    fn skill_config_dirs_exclude_build_disabled_vendors_and_keep_cursor() {
+    fn skill_config_dirs_keep_native_and_shared_standard_roots() {
         assert_eq!(
             CompatConfig::default().skill_config_dirs(),
-            vec![".grok", ".cursor"]
+            vec![".grok", ".agents"]
         );
     }
 
@@ -538,15 +532,12 @@ mod tests {
     fn skill_config_dirs_gates_cursor() {
         let mut c = CompatConfig::default();
         c.cursor.skills = false;
-        assert_eq!(c.skill_config_dirs(), vec![".grok"]);
+        assert_eq!(c.skill_config_dirs(), vec![".grok", ".agents"]);
     }
 
     #[test]
-    fn rules_dirs_exclude_claude_and_keep_cursor() {
-        assert_eq!(
-            CompatConfig::default().rules_dirs(),
-            vec![".grok/rules", ".cursor/rules"]
-        );
+    fn rules_dirs_exclude_all_vendor_roots() {
+        assert_eq!(CompatConfig::default().rules_dirs(), vec![".grok/rules"]);
     }
 
     #[test]
@@ -568,21 +559,22 @@ mod tests {
     fn claude_fields_cannot_restore_discovery_paths() {
         let mut c = CompatConfig::default();
         c.claude = VendorCompat::with_all(true);
-        assert_eq!(c.skill_config_dirs(), vec![".grok", ".cursor"]);
-        assert_eq!(c.rules_dirs(), vec![".grok/rules", ".cursor/rules"]);
+        c.cursor = VendorCompat::with_all(true);
+        assert_eq!(c.skill_config_dirs(), vec![".grok", ".agents"]);
+        assert_eq!(c.rules_dirs(), vec![".grok/rules"]);
         assert_eq!(
             c.agent_filenames(),
             vec!["Agents.md", "AGENT.md", "AGENTS.md"]
         );
-        assert_eq!(c.agents_home_dirs(), vec![".cursor"]);
+        assert!(c.agents_home_dirs().is_empty());
     }
 
     #[test]
     fn codex_fields_cannot_restore_shared_skill_roots() {
         let mut c = CompatConfig::default();
         c.codex = VendorCompat::with_all(true);
-        assert_eq!(c.skill_config_dirs(), vec![".grok", ".cursor"]);
-        assert!(!c.skill_config_dirs().contains(&".agents"));
+        c.cursor = VendorCompat::with_all(true);
+        assert_eq!(c.skill_config_dirs(), vec![".grok", ".agents"]);
         assert_eq!(
             c.agent_filenames(),
             vec!["Agents.md", "AGENT.md", "AGENTS.md"]
@@ -592,8 +584,8 @@ mod tests {
     #[test]
     fn agents_home_dirs_gates_cursor() {
         let mut c = CompatConfig::default();
-        assert_eq!(c.agents_home_dirs(), vec![".cursor"]);
-        c.cursor.agents = false;
+        assert!(c.agents_home_dirs().is_empty());
+        c.cursor.agents = true;
         assert!(c.agents_home_dirs().is_empty());
     }
 

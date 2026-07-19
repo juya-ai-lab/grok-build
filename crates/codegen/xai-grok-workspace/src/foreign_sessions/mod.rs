@@ -98,6 +98,7 @@ pub fn scan_foreign_sessions(
 ) -> Vec<ForeignSessionSummary> {
     enabled.claude = false;
     enabled.codex = false;
+    enabled.cursor = false;
     let scan_claude = |_: &Path, _: SystemTime| Vec::new();
     let scan_codex = |_: &Path, _: SystemTime| Vec::new();
     let scan_cursor = |_: &Path, _: SystemTime| Vec::new();
@@ -110,6 +111,7 @@ pub fn most_recent_foreign_session(
 ) -> Option<RecentForeignSession> {
     enabled.claude = false;
     enabled.codex = false;
+    enabled.cursor = false;
     let recent_claude = |_: &Path, _: SystemTime, _: Duration| RecentProbe::Complete(None);
     let recent_codex = |_: &Path, _: SystemTime, _: Duration| RecentProbe::Complete(None);
     let recent_cursor = |_: &Path, _: SystemTime, _: Duration| RecentProbe::Complete(None);

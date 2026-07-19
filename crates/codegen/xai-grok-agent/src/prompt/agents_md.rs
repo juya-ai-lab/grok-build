@@ -1,7 +1,7 @@
 //! AGENTS.md / rules directory discovery and loading.
 //!
 //! Searches from cwd to repo root, plus `~/.grok/`. Also discovers
-//! `*.md` files in `.grok/rules/` and `.cursor/rules/` directories.
+//! `*.md` files in `.grok/rules/`; third-party vendor roots are not scanned.
 
 use std::path::{Path, PathBuf};
 
@@ -50,9 +50,9 @@ fn find_agent_files(dir: &Path, filenames: &[&str]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Find `*.md` files in `.grok/rules/` and `.cursor/rules/`,
-/// sorted alphabetically. `rules_subdirs` is the (compat-gated) list, precomputed
-/// once by the caller so the walk doesn't re-allocate it per directory.
+/// Find native `*.md` rules files, sorted alphabetically. `rules_subdirs` is
+/// the build-gated list, precomputed once by the caller so the walk doesn't
+/// re-allocate it per directory.
 fn find_rules_files(dir: &Path, rules_subdirs: &[&str]) -> Vec<PathBuf> {
     let mut results = Vec::new();
     for rules_subdir in rules_subdirs {
@@ -157,8 +157,8 @@ fn add_discovered_candidate(
 /// Read Agents.md from ~/.grok/, git repo root, and session cwd.
 /// Returns a list of AgentConfigFile with their file names, full paths, and contents.
 ///
-/// `compat` gates Cursor surfaces. Claude project instructions are
-/// build-disabled.
+/// Third-party instruction surfaces are disabled by the build-wide policy;
+/// `compat` remains a schema-compatible input for diagnostics.
 pub async fn read_agents_config_with_paths(
     working_directory: &str,
     compat: CompatConfig,
@@ -209,24 +209,28 @@ async fn read_agents_config_with_roots(
     let mut home_roots = Vec::new();
     add_discovery_root(&mut home_roots, grok_home, true, HOME_RULES_DIRS);
     if let Some(home) = home_dir {
-        if compat.claude.agents || compat.claude.rules {
+        if xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED
+            && (compat.claude.agents || compat.claude.rules)
+        {
             add_discovery_root(
                 &mut home_roots,
                 home.join(".claude"),
-                compat.claude.agents,
-                if compat.claude.rules {
+                xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED && compat.claude.agents,
+                if xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED && compat.claude.rules {
                     HOME_RULES_DIRS
                 } else {
                     &[]
                 },
             );
         }
-        if compat.cursor.agents || compat.cursor.rules {
+        if xai_grok_config::CURSOR_COMPAT_ENABLED
+            && (compat.cursor.agents || compat.cursor.rules)
+        {
             add_discovery_root(
                 &mut home_roots,
                 home.join(".cursor"),
-                compat.cursor.agents,
-                if compat.cursor.rules {
+                xai_grok_config::CURSOR_COMPAT_ENABLED && compat.cursor.agents,
+                if xai_grok_config::CURSOR_COMPAT_ENABLED && compat.cursor.rules {
                     HOME_RULES_DIRS
                 } else {
                     &[]

@@ -173,17 +173,17 @@ fn canonicalize_skill_path(path: std::path::PathBuf) -> std::path::PathBuf {
 /// any stat/canonicalization, then the central canonical/symlink-aware guard.
 fn resolve_validated_skill_mutation_path(raw: &str, cwd: &str) -> anyhow::Result<String> {
     let lexical = lexical_skill_path(raw, cwd);
-    if xai_grok_config::validate_grok_path_lexically(&lexical).is_none() {
+    if xai_grok_config::validate_skill_path_lexically(&lexical).is_none() {
         anyhow::bail!(
-            "refusing skill path under Claude/Codex vendor state: {}",
+            "refusing skill path under vendor-specific agent state: {}",
             lexical.display()
         );
     }
 
     let resolved = canonicalize_skill_path(lexical);
-    if xai_grok_config::validate_grok_path(&resolved).is_none() {
+    if xai_grok_config::validate_skill_path(&resolved).is_none() {
         anyhow::bail!(
-            "refusing skill path under Claude/Codex vendor state: {}",
+            "refusing skill path under vendor-specific agent state: {}",
             resolved.display()
         );
     }
@@ -198,9 +198,9 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
         .ok()
         .and_then(|repo| repo.workdir().map(|p| p.to_path_buf()));
 
-    // Vendor roots are build-disabled and cannot be restored through explicit
-    // configured paths either.
-    let local_dir_names: &[&str] = &[".grok"];
+    // Native Grok and the vendor-neutral Agent Skills root are discoverable;
+    // vendor-specific roots remain build-disabled.
+    let local_dir_names: &[&str] = &[".grok", ".agents"];
 
     let mut sources: Vec<(String, usize)> = Vec::new();
     let subdirs = ["skills", "commands"];
@@ -234,12 +234,16 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
     for subdir in &subdirs {
         try_add_source(grok_home.join(subdir), None);
     }
+    if let Some(home) = dirs::home_dir() {
+        try_add_source(home.join(".agents").join("skills"), None);
+        try_add_source(home.join(".agents").join("commands"), None);
+    }
 
     // [paths] extra_skill_dirs from config.toml supplement the built-in scan
-    // locations, but can never point back into Claude/Codex-owned state.
+    // locations, but can never point back into vendor-specific state.
     for dir in extra_skill_dirs_from_config() {
         let path = crate::claude_import::expand_home(&dir);
-        if xai_grok_config::validate_grok_path(&path).is_some()
+        if xai_grok_config::validate_skill_path(&path).is_some()
             && path.is_dir()
             && !sources
                 .iter()
@@ -528,14 +532,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_sources_do_not_display_build_disabled_vendor_roots() {
+    fn auto_sources_keep_original_agents_skills_and_commands_and_hide_vendor_roots() {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
         let grok_skills = cwd.join(".grok").join("skills");
         let agents_skills = cwd.join(".agents").join("skills");
+        let agents_commands = cwd.join(".agents").join("commands");
         let claude_skills = cwd.join(".claude").join("skills");
         std::fs::create_dir_all(&grok_skills).unwrap();
         std::fs::create_dir_all(&agents_skills).unwrap();
+        std::fs::create_dir_all(&agents_commands).unwrap();
         std::fs::create_dir_all(&claude_skills).unwrap();
 
         let skills = vec![
@@ -548,9 +554,17 @@ mod tests {
                 ..SkillInfo::default()
             },
             SkillInfo {
-                name: "codex-hidden".into(),
+                name: "shared-standard".into(),
                 path: agents_skills
-                    .join("codex-hidden/SKILL.md")
+                    .join("shared-standard/SKILL.md")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..SkillInfo::default()
+            },
+            SkillInfo {
+                name: "shared-command".into(),
+                path: agents_commands
+                    .join("shared-command.md")
                     .to_string_lossy()
                     .into_owned(),
                 ..SkillInfo::default()
@@ -573,8 +587,14 @@ mod tests {
             ".grok source must remain visible: {sources:?}"
         );
         assert!(
-            sources.iter().all(|(path, _)| !path.contains("/.agents/")),
-            ".agents sources must not be displayed: {sources:?}"
+            sources.iter().any(|(path, _)| path.contains("/.agents/skills")),
+            ".agents standard source must remain visible: {sources:?}"
+        );
+        assert!(
+            sources
+                .iter()
+                .any(|(path, _)| path.contains("/.agents/commands")),
+            ".agents command source must retain original Grok support: {sources:?}"
         );
         assert!(
             sources.iter().all(|(path, _)| !path.contains("/.claude/")),
@@ -672,9 +692,7 @@ mod tests {
         for raw in [
             ".claude/skills",
             ".codex/skills",
-            ".agents/skills",
             ".claude.json",
-            "safe/../.agents/skills",
         ] {
             assert!(
                 resolve_validated_skill_mutation_path(raw, &cwd.to_string_lossy()).is_err(),
@@ -682,7 +700,13 @@ mod tests {
             );
         }
 
-        for raw in ["normal-skills", ".claude.json.bak", "my.claude.json"] {
+        for raw in [
+            "normal-skills",
+            ".agents/skills",
+            "safe/../.agents/skills",
+            ".claude.json.bak",
+            "my.claude.json",
+        ] {
             let resolved =
                 resolve_validated_skill_mutation_path(raw, &cwd.to_string_lossy()).unwrap();
             assert_eq!(std::path::PathBuf::from(resolved), cwd.join(raw), "{raw}");
@@ -693,7 +717,7 @@ mod tests {
     #[test]
     fn skill_mutation_paths_reject_vendor_symlink_aliases_after_canonicalization() {
         let tmp = tempfile::tempdir().unwrap();
-        let vendor_dir = tmp.path().join(".agents").join("skills");
+        let vendor_dir = tmp.path().join(".codex").join("skills");
         let vendor_file = tmp.path().join(".claude.json");
         let dir_alias = tmp.path().join("apparently-safe-skills");
         let file_alias = tmp.path().join("apparently-safe.json");
@@ -704,7 +728,7 @@ mod tests {
 
         for alias in [dir_alias, file_alias] {
             assert!(
-                xai_grok_config::validate_grok_path_lexically(&alias).is_some(),
+                xai_grok_config::validate_skill_path_lexically(&alias).is_some(),
                 "safe-looking aliases must reach the canonical phase"
             );
             assert!(

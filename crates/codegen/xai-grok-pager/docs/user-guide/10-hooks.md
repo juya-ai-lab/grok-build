@@ -62,14 +62,15 @@ Hooks are discovered from several places (all are merged):
 | Scope | Path | Trusted? | Notes |
 |-------|------|----------|-------|
 | Global | `~/.grok/hooks/*.json` | Always | Personal hooks |
-| Global | `~/.claude/settings.json` (and `settings.local.json`) | Always | Claude Code compatibility (configurable) |
-| Global | `~/.cursor/hooks.json` | Always | Cursor compatibility (configurable) |
+| Global | `~/.claude/settings.json` (and `settings.local.json`) | — | Disabled in this build |
+| Global | `~/.cursor/hooks.json` | — | Disabled in this build |
 | Project | `<project>/.grok/hooks/*.json` | Requires trust | Per-repo automation |
-| Project | `<project>/.claude/settings.json` (and `settings.local.json`) | Requires trust | Claude compatibility (configurable) |
-| Project | `<project>/.cursor/hooks.json` | Requires trust | Cursor compatibility (configurable) |
+| Project | `<project>/.claude/settings.json` (and `settings.local.json`) | — | Disabled in this build |
+| Project | `<project>/.cursor/hooks.json` | — | Disabled in this build |
 | Plugin | Bundled inside installed plugins | Per-plugin | Shared team hooks |
 
-The Claude and Cursor hook sources are scanned by default. To disable scanning for a specific vendor, set `[compat.<vendor>] hooks = false` in `~/.grok/config.toml` or the corresponding environment variable. See [Configuration](05-configuration.md#harness-compatibility) for details.
+Claude and Cursor hook sources are disabled at compile time. The raw
+`[compat.<vendor>]` keys remain schema-compatible but cannot enable scanning.
 
 **Trusting a project**: The first time you open a project with hooks, you must trust it before its project hooks will run -- until then they are silently skipped. Grant trust by running `/hooks-trust` (or launching with `--trust`); the decision is recorded in the unified folder-trust store (`~/.grok/trusted_folders.toml`), the same gate that governs repo-local MCP/LSP servers. Global hooks in `~/.grok/hooks/` are always trusted and need no entry. This prevents untrusted repos from running arbitrary code.
 
@@ -98,22 +99,8 @@ Because hooks are unified under folder-trust, a `--trust` / `/hooks-trust` grant
 
 `SubagentEnd` is accepted as an alias for `SubagentStop`. Only `PreToolUse` can block a tool call; every other event is passive.
 
-### Cursor Hook Compatibility
-
-Grok accepts Cursor's camelCase hook event names, so `~/.cursor/hooks.json` loads unchanged:
-
-| Cursor event | Maps to |
-|---|---|
-| `sessionStart`, `sessionEnd` | `SessionStart`, `SessionEnd` |
-| `preToolUse`, `postToolUse`, `postToolUseFailure` | `PreToolUse`, `PostToolUse`, `PostToolUseFailure` |
-| `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile` | `PreToolUse` |
-| `afterShellExecution`, `afterMCPExecution`, `afterFileEdit` | `PostToolUse` |
-| `afterAgentResponse`, `afterAgentThought` | `PostToolUse` |
-| `beforeSubmitPrompt` | `UserPromptSubmit` |
-| `subagentStart`, `subagentStop` | `SubagentStart`, `SubagentStop` |
-| `preCompact`, `stop` | `PreCompact`, `Stop` |
-
-Cursor's per-operation hooks (`beforeShellExecution`, `afterFileEdit`, etc.) map to the generic `PreToolUse`/`PostToolUse` events. The hook script receives the tool name in the JSON input and can filter accordingly, or use the `matcher` field.
+Cursor camelCase and per-operation hook event aliases are rejected in this
+build; use Grok's native PascalCase or snake_case event names in `.grok/hooks`.
 
 ---
 
@@ -145,7 +132,7 @@ Each `.json` file can define hooks for multiple events:
 
 ### Key Fields
 
-- **Event name** (top-level key): any event listed in [Hook Events](#hook-events). Grok skips unrecognized event names so a shared Claude or Cursor settings file still loads.
+- **Event name** (top-level key): any event listed in [Hook Events](#hook-events). Grok skips unrecognized event names.
 - **matcher** (optional): A regular expression that selects which invocations trigger the hook. It applies to the tool events — `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and `PermissionDenied` — where it tests the tool name, and to `Notification`, where it tests the notification type. The lifecycle events (`SessionStart`, `SessionEnd`, `Stop`, `UserPromptSubmit`) reject a matcher; other events ignore it. An empty or omitted matcher matches everything. The matcher tests the real tool name; MCP calls routed through the internal `use_tool` dispatcher appear as the qualified `server__tool` name (e.g. `linear__save_issue`), so match on that, not the dispatcher name.
 - **type**: `"command"` (run a script or shell one-liner) or `"http"` (POST the event to a URL).
 - **command**: Path to executable (relative to the JSON file) or inline shell command.

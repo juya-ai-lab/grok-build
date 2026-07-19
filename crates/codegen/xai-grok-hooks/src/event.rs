@@ -55,43 +55,29 @@ impl<'de> serde::Deserialize<'de> for HookEventName {
     {
         let s = String::deserialize(deserializer)?;
         match s.as_str() {
-            // PascalCase (native) + snake_case + camelCase (third-party compat).
-            // Per-operation hook names (beforeShellExecution, afterFileEdit, etc.)
-            // map to our generic PreToolUse/PostToolUse — the hook script receives the
-            // tool name in JSON input and can filter, or use the `matcher` field.
-            "SessionStart" | "session_start" | "sessionStart" => Ok(Self::SessionStart),
-            "PreToolUse"
-            | "pre_tool_use"
-            | "preToolUse"
-            | "beforeShellExecution"
-            | "beforeMCPExecution"
-            | "beforeReadFile" => Ok(Self::PreToolUse),
-            "PostToolUse"
-            | "post_tool_use"
-            | "postToolUse"
-            | "afterShellExecution"
-            | "afterMCPExecution"
-            | "afterFileEdit"
-            | "afterAgentResponse"
-            | "afterAgentThought" => Ok(Self::PostToolUse),
-            "PostToolUseFailure" | "post_tool_use_failure" | "postToolUseFailure" => {
+            // Native PascalCase plus Grok's snake_case wire spelling. Cursor's
+            // camelCase and per-operation aliases are intentionally rejected.
+            "SessionStart" | "session_start" => Ok(Self::SessionStart),
+            "PreToolUse" | "pre_tool_use" => Ok(Self::PreToolUse),
+            "PostToolUse" | "post_tool_use" => Ok(Self::PostToolUse),
+            "PostToolUseFailure" | "post_tool_use_failure" => {
                 Ok(Self::PostToolUseFailure)
             }
-            "SessionEnd" | "session_end" | "sessionEnd" => Ok(Self::SessionEnd),
+            "SessionEnd" | "session_end" => Ok(Self::SessionEnd),
             "Stop" | "stop" => Ok(Self::Stop),
-            "StopFailure" | "stop_failure" | "stopFailure" => Ok(Self::StopFailure),
+            "StopFailure" | "stop_failure" => Ok(Self::StopFailure),
             "Notification" | "notification" => Ok(Self::Notification),
-            "UserPromptSubmit" | "user_prompt_submit" | "beforeSubmitPrompt" => {
+            "UserPromptSubmit" | "user_prompt_submit" => {
                 Ok(Self::UserPromptSubmit)
             }
-            "PermissionDenied" | "permission_denied" | "permissionDenied" => {
+            "PermissionDenied" | "permission_denied" => {
                 Ok(Self::PermissionDenied)
             }
-            "SubagentStart" | "subagent_start" | "subagentStart" => Ok(Self::SubagentStart),
-            "SubagentStop" | "subagent_stop" | "subagentStop" => Ok(Self::SubagentStop),
-            "SubagentEnd" | "subagent_end" | "subagentEnd" => Ok(Self::SubagentEnd),
-            "PreCompact" | "pre_compact" | "preCompact" => Ok(Self::PreCompact),
-            "PostCompact" | "post_compact" | "postCompact" => Ok(Self::PostCompact),
+            "SubagentStart" | "subagent_start" => Ok(Self::SubagentStart),
+            "SubagentStop" | "subagent_stop" => Ok(Self::SubagentStop),
+            "SubagentEnd" | "subagent_end" => Ok(Self::SubagentEnd),
+            "PreCompact" | "pre_compact" => Ok(Self::PreCompact),
+            "PostCompact" | "post_compact" => Ok(Self::PostCompact),
             other => Err(serde::de::Error::custom(format!(
                 "unknown hook event: '{other}'. Expected one of: \
                  SessionStart, PreToolUse, PostToolUse, PostToolUseFailure, \

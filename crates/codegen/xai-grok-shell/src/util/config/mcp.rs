@@ -1104,7 +1104,7 @@ pub fn load_cursor_mcp_servers(
     compat: &CompatConfig,
 ) -> Vec<acp::McpServer> {
     // Compat gate: skip Cursor MCP loading when disabled.
-    if !compat.cursor.mcps {
+    if !xai_grok_config::CURSOR_COMPAT_ENABLED || !compat.cursor.mcps {
         return vec![];
     }
     let mut result = Vec::new();
@@ -1153,7 +1153,7 @@ pub(crate) fn load_cursor_mcp_servers_as_configs(
     compat: &CompatConfig,
 ) -> IndexMap<String, McpServerConfig> {
     // Compat gate: skip Cursor MCP loading when disabled.
-    if !compat.cursor.mcps {
+    if !xai_grok_config::CURSOR_COMPAT_ENABLED || !compat.cursor.mcps {
         return IndexMap::new();
     }
     let mut result = IndexMap::new();

@@ -25,7 +25,7 @@ pub(crate) const AGENT_FILENAMES: &[&str] = &["Agents.md", "AGENT.md", "AGENTS.m
 /// The runtime list is produced by `CompatConfig::rules_dirs()`; this constant
 /// is retained as the build-enabled reference for the pinning test.
 #[cfg(test)]
-pub(crate) const RULES_DIRS: &[&str] = &[".grok/rules", ".cursor/rules"];
+pub(crate) const RULES_DIRS: &[&str] = &[".grok/rules"];
 
 /// Maximum number of parent directories to walk upward per call.
 ///
@@ -256,8 +256,7 @@ impl AgentsMdTracker {
         let mut discoveries = Vec::new();
 
         // Compute the gated filename / rules-dir lists once per call (they are
-        // constant across the walk). Build-disabled vendor entries are absent;
-        // Cursor entries remain gated by their compat cells.
+        // constant across the walk). Build-disabled vendor entries are absent.
         let agent_filenames = self.compat.agent_filenames();
         let rules_dirs = self.compat.rules_dirs();
 
@@ -321,7 +320,7 @@ impl AgentsMdTracker {
                     }
                 }
 
-                // Check for rules files in .grok/rules/ and .cursor/rules/.
+                // Check for rules files in the native .grok/rules/ tree.
                 // `rules_dirs` is computed once above the walk.
                 for rules_subdir in &rules_dirs {
                     let rules_dir = dir.join(rules_subdir);
@@ -862,7 +861,7 @@ mod tests {
         let sub = root.join("sub");
         fs::create_dir_all(&sub).unwrap();
 
-        let rules_dir = sub.join(".cursor").join("rules");
+        let rules_dir = sub.join(".grok").join("rules");
         fs::create_dir_all(&rules_dir).unwrap();
         fs::write(rules_dir.join("style.md"), "# Style").unwrap();
 

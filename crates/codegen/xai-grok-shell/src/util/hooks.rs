@@ -72,7 +72,7 @@ pub fn discover_hook_source_paths(
         || crate::claude_import::is_claude_import_marked_with_log("discover_hook_source_paths");
 
     // Compat gate: skip Cursor hook sources when disabled.
-    let skip_cursor = !compat.cursor.hooks;
+    let skip_cursor = !xai_grok_config::CURSOR_COMPAT_ENABLED || !compat.cursor.hooks;
 
     let home = dirs::home_dir();
     // user_grok_home() is None when no home resolves, so inspect lists the same
@@ -146,9 +146,8 @@ pub fn discover_hook_source_paths(
 /// Single load entry point: build compat-aware sources, gate project sources on
 /// trust, then load. Every session-startup and mid-session reload site routes
 /// through here so the source policy stays in one place. `discover_hook_source_paths`
-/// and `HookSourcePaths::as_sources` stay public for the `inspect` path (which
-/// enumerates sources with all vendors on) and the unit tests that assert on the
-/// raw source lists.
+/// and `HookSourcePaths::as_sources` stay public for the build-gated `inspect`
+/// path and the unit tests that assert on the raw source lists.
 pub fn discover_hooks(
     git_root: Option<&Path>,
     compat: &xai_grok_tools::types::compat::CompatConfig,

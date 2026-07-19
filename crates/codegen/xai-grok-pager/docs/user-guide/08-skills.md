@@ -19,20 +19,23 @@ Grok discovers skills from these directories, in priority order:
 | Location | Scope | Priority | Notes |
 |----------|-------|----------|-------|
 | `./.grok/skills/`, `./.grok/commands/` | Local (CWD) | Highest | Current directory skills / legacy command markdown |
+| `./.agents/skills/` | Local / Repo | High | Vendor-neutral Agent Skills standard |
+| `./.agents/commands/` | Local / Repo | High | Shared Markdown commands supported by original Grok |
 | `<repo_root>/.grok/skills/`, `…/commands/` | Repo | Medium | Shared across the repo |
 | `~/.grok/skills/`, `~/.grok/commands/` | User | Lowest | Personal skills for all projects |
-| `~/.cursor/skills/` | User | Lowest | Cursor compatibility (configurable) |
-| `./.cursor/skills/` | Local / Repo | High | Project Cursor skills (when cursor compat skills are enabled) |
+| `~/.agents/skills/` | User | Lowest | Cross-agent Agent Skills standard |
+| `~/.agents/commands/` | User | Lowest | Shared Markdown commands supported by original Grok |
+| `~/.cursor/skills/` | User | — | Disabled in this build |
+| `./.cursor/skills/` | Local / Repo | — | Disabled in this build |
 
-Grok deduplicates skills by name -- a higher-priority location overrides a lower one. It walks `.grok` and enabled `.cursor` locations at every directory between your working directory and the repo root. Claude Code and Codex's shared `.agents` roots are compile-time disabled and rejected even when reached through a symlink or a custom path.
+Grok deduplicates skills and commands by name -- a higher-priority location overrides a lower one. It walks native `.grok` plus the original shared `.agents/skills` and `.agents/commands` locations at every directory between your working directory and the repo root. Claude Code, Cursor, and Codex proprietary roots are compile-time disabled and rejected even when reached through a symlink or a custom path.
 
 Flat `*.md` files under a `commands/` directory become user-invocable slash commands (filename stem = command name), matching Claude Code's legacy custom-command layout.
 
-Skill and command discovery does **not** use `.gitignore`. Enabled `.grok/` and `.cursor/` roots load when present on disk. To hide a skill, use `[skills] ignore` in config (not repo ignore rules).
+Skill and command discovery does **not** use `.gitignore`. Native `.grok/` and the original `.agents/skills` and `.agents/commands` roots load when present on disk. Other `.agents` subdirectories are not added by this fork. To hide a skill, use `[skills] ignore` in config (not repo ignore rules).
 
-Only Cursor skill compatibility remains configurable through `[compat.cursor]`
-or `GROK_CURSOR_SKILLS_ENABLED`. See
-[Configuration](05-configuration.md#harness-compatibility).
+Cursor, Claude Code, and Codex skill compatibility is disabled at compile time;
+`[compat.*]` values and environment variables cannot re-enable it.
 
 ### Additional Skill Directories
 

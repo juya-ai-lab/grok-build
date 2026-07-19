@@ -176,8 +176,8 @@ pub fn load_hooks_from_sources(
 
     // Index by event type, deduplicating by hook content (command/url) +
     // matcher across all sources. This prevents the same hook from executing
-    // multiple times when it's defined in multiple sources (e.g., ~/.grok/hooks/ +
-    // ~/.claude/settings.json + ~/.cursor/hooks.json), while still allowing
+    // multiple times when it's defined in multiple native sources (e.g.,
+    // multiple ~/.grok/hooks/ roots), while still allowing
     // hooks that share a command/URL but have different matchers (e.g. tool-scoped
     // hooks) to all run.
     //

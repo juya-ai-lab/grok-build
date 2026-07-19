@@ -383,8 +383,8 @@ fn log_watch_error(err: &notify::Error, msg: &str) {
     }
 }
 
-/// Watches skill directories (`~/.grok/skills/`, `<repo>/.grok/skills/`, etc.)
-/// for new, modified, or removed `SKILL.md` files.
+/// Watches skill and command directories (`~/.grok/skills/`,
+/// `<repo>/.agents/commands/`, etc.) for relevant Markdown changes.
 ///
 /// When a change is detected the receiver gets a `()` signal. The caller is
 /// responsible for triggering a skill re-advertisement to connected clients.
@@ -407,8 +407,8 @@ fn is_skill_change_path(p: &Path) -> bool {
 }
 
 /// True for a global/home-level config dir that must never be watched
-/// recursively: `grok_home` (`~/.grok`, or `$GROK_HOME`) or a known vendor dir
-/// directly under `$HOME` ([`HOME_VENDOR_DIRS`]).
+/// recursively: `grok_home` (`~/.grok`, or `$GROK_HOME`) or a known native
+/// config dir directly under `$HOME` ([`HOME_SKILL_ROOT_NAMES`]).
 ///
 /// These hold large non-skill trees — `~/.grok` alone has `worktrees/`,
 /// `sessions/`, `logs/`, `upload_queue/` — so recursing them exhausted the
@@ -424,10 +424,10 @@ fn is_global_config_dir(dir: &Path, grok_home: &Path) -> bool {
     is_global_config_dir_impl(dir, grok_home, home.as_deref())
 }
 
-/// Vendor config dir names that sit directly under `$HOME` and carry large
+/// Native config dir names that sit directly under `$HOME` and carry large
 /// non-skill trees. Kept in sync with the home-level dirs added by
 /// `collect_skill_config_dirs`.
-const HOME_VENDOR_DIRS: &[&str] = &[".grok", ".cursor"];
+const HOME_SKILL_ROOT_NAMES: &[&str] = &[".grok", ".agents"];
 
 /// Testable core of [`is_global_config_dir`] with `$HOME` injected.
 fn is_global_config_dir_impl(dir: &Path, grok_home: &Path, home: Option<&Path>) -> bool {
@@ -441,18 +441,28 @@ fn is_global_config_dir_impl(dir: &Path, grok_home: &Path, home: Option<&Path>) 
     }
     dir.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| HOME_VENDOR_DIRS.contains(&n))
+        .is_some_and(|n| HOME_SKILL_ROOT_NAMES.contains(&n))
 }
 
-/// Watch only a config dir's skill subtrees — `<dir>/skills` recursively and
-/// `<dir>/commands` flat — never the dir root (see [`is_global_config_dir`]).
-/// Returns the number of watches registered; a missing subdir is skipped (for
-/// `~/.grok` these exist at startup; later creation is caught on restart).
+/// Watch only a config dir's original skill/command subtrees — `<dir>/skills`
+/// recursively and `<dir>/commands` flat. `.agents` also gets a non-recursive
+/// root watch so creating either supported directory can trigger discovery
+/// without exposing unrelated sibling contents.
 fn watch_skill_subdirs(
     debouncer: &mut Debouncer<AccessFilteredWatcher>,
     config_dir: &Path,
 ) -> usize {
     let mut watched = 0;
+    let is_agents = config_dir.file_name() == Some(std::ffi::OsStr::new(".agents"));
+    if is_agents {
+        match debouncer
+            .watcher()
+            .watch(config_dir, RecursiveMode::NonRecursive)
+        {
+            Ok(()) => watched += 1,
+            Err(e) => log_watch_error(&e, "failed to watch Agent Skills root"),
+        }
+    }
     for (subdir, mode) in [
         ("skills", RecursiveMode::Recursive),
         ("commands", RecursiveMode::NonRecursive),
@@ -505,9 +515,12 @@ impl SkillsFileWatcher {
 
         let mut watched = 0;
         for dir in &dirs_to_watch {
-            if is_global_config_dir(dir, &grok_home) {
-                // Home dir: watch skill subtrees only, never the root
-                // (worktrees/, sessions/, logs/ — see `is_global_config_dir`).
+            if is_global_config_dir(dir, &grok_home)
+                || dir.file_name() == Some(std::ffi::OsStr::new(".agents"))
+            {
+                // Home roots and every `.agents` root get scoped subtree
+                // watches. Only the original skills/commands surfaces are
+                // watched; unrelated siblings remain outside discovery.
                 watched += watch_skill_subdirs(&mut debouncer, dir);
             } else {
                 // Project/repo dir: bounded, so recurse to catch new `skills/`
@@ -560,8 +573,8 @@ mod tests {
         // grok_home and vendor dirs directly under $HOME: scoped (global).
         assert!(g(&grok_home));
         assert!(!g(&home.join(".claude")));
-        assert!(g(&home.join(".cursor")));
-        assert!(!g(&home.join(".agents")));
+        assert!(!g(&home.join(".cursor")));
+        assert!(g(&home.join(".agents")));
 
         // A user [skills].paths entry under $HOME: NOT global (stays recursive).
         assert!(!g(&home.join("my-skills")));

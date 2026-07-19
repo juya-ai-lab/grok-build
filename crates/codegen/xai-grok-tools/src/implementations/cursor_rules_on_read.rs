@@ -87,7 +87,7 @@ pub async fn append_cursor_rules_for_read(
     content: &mut String,
     content_concise: &mut Option<String>,
 ) {
-    if !enabled {
+    if (!xai_grok_config::CURSOR_COMPAT_ENABLED && !cfg!(test)) || !enabled {
         return;
     }
     let Some(reminder) =

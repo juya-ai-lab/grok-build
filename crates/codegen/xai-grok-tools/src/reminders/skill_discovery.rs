@@ -2,17 +2,17 @@
 //!
 //! Contains `SkillDiscoveryReminder`, a cross-cutting `Reminder` that fires
 //! after every tool call to check for SKILL.md files in `.grok/skills/` or
-//! `.cursor/skills/` directories near the accessed path.
+//! the vendor-neutral `.agents/skills/` directories near the accessed path.
 //!
 //! The actual tracking logic lives in
 //! `types::skill_discovery_tracker::SkillDiscoveryTracker`.
 
 use std::path::{Path, PathBuf};
 
-/// Directories that contain skill definitions (`.grok/skills/` and
-/// `.cursor/skills/`). Shared between startup skill discovery and runtime
-/// `SkillDiscoveryReminder`. Claude and Codex shared paths are build-disabled.
-pub const SKILL_CONFIG_DIRS: &[&str] = &[".grok", ".cursor"];
+/// Directories that contain skill definitions (`.grok/skills/` and the
+/// standard `.agents/skills/`). Shared between startup skill discovery and
+/// runtime `SkillDiscoveryReminder`. Proprietary vendor paths are disabled.
+pub const SKILL_CONFIG_DIRS: &[&str] = &[".grok", ".agents"];
 
 use crate::implementations::skills::discovery;
 use crate::implementations::skills::types::SkillScope;
@@ -79,8 +79,11 @@ impl SkillDiscoveryReminder {
     }
 
     /// Check whether a SKILL.md path is inside a supported skills directory
-    /// (`.grok/skills/` or `.cursor/skills/`).
+    /// (`.grok/skills/` or `.agents/skills/`).
     fn is_in_supported_skills_dir(path: &Path) -> bool {
+        if xai_grok_config::validate_skill_path(path).is_none() {
+            return false;
+        }
         for ancestor in path.ancestors().skip(1) {
             if ancestor.file_name().is_some_and(|n| n == "skills") {
                 return ancestor
@@ -253,8 +256,8 @@ mod tests {
     }
 
     #[test]
-    fn supported_skill_dirs_exclude_build_disabled_vendors_and_keep_cursor() {
-        for root in [".grok", ".cursor"] {
+    fn supported_skill_dirs_keep_native_and_standard_roots_only() {
+        for root in [".grok", ".agents"] {
             let path = PathBuf::from("/repo")
                 .join(root)
                 .join("skills/demo/SKILL.md");
@@ -267,7 +270,7 @@ mod tests {
             Path::new("/repo/.claude/skills/demo/SKILL.md")
         ));
         assert!(!SkillDiscoveryReminder::is_in_supported_skills_dir(
-            Path::new("/repo/.agents/skills/demo/SKILL.md")
+            Path::new("/repo/.cursor/skills/demo/SKILL.md")
         ));
     }
 }

@@ -132,6 +132,9 @@ static TELEMETRY_CLIENT: OnceLock<Mutex<Option<TelemetryClient>>> = OnceLock::ne
 /// Returns `true` when telemetry mode is `Enabled`.
 /// Used by `log_event` — product analytics events only fire in `Enabled` mode.
 pub fn is_enabled() -> bool {
+    if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+        return false;
+    }
     TELEMETRY_CLIENT
         .get()
         .and_then(|m| m.lock().ok())
@@ -141,6 +144,9 @@ pub fn is_enabled() -> bool {
 /// Returns `true` when telemetry mode is `Enabled` or `SessionMetrics`.
 /// Used by `session_metrics` — lifecycle events fire in both modes.
 pub fn is_session_metrics_enabled() -> bool {
+    if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+        return false;
+    }
     TELEMETRY_CLIENT
         .get()
         .and_then(|m| m.lock().ok())
@@ -170,6 +176,9 @@ impl UserContext {
 
 /// Core telemetry emitter. Routes to product events + Mixpanel.
 pub async fn track(event_name: &str, request_id: &str, ctx: &UserContext, mut metadata: Metadata) {
+    if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+        return;
+    }
     let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
     let client = {
         let guard = lock.lock().unwrap_or_else(|err| err.into_inner());
@@ -260,6 +269,9 @@ pub async fn track(event_name: &str, request_id: &str, ctx: &UserContext, mut me
 /// lifecycle events via [`track`], but must not write Mixpanel people
 /// profiles (`engage`).
 pub fn sync_profile() {
+    if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED {
+        return;
+    }
     let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
     let client = {
         let guard = lock.lock().unwrap_or_else(|err| err.into_inner());
@@ -330,7 +342,7 @@ pub fn init(
 ) {
     let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
     let mut guard = lock.lock().unwrap_or_else(|err| err.into_inner());
-    *guard = if mode.is_disabled() {
+    *guard = if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED || mode.is_disabled() {
         None
     } else {
         Some(TelemetryClient::from_config(
@@ -363,7 +375,7 @@ pub fn init_if_needed(
     subscription_tier: Option<String>,
     http_client: reqwest::Client,
 ) {
-    if mode.is_disabled() {
+    if !xai_grok_config::AGGREGATE_TELEMETRY_ENABLED || mode.is_disabled() {
         return;
     }
     let lock = TELEMETRY_CLIENT.get_or_init(|| Mutex::new(None));
@@ -406,10 +418,10 @@ mod tests {
         assert_eq!(event_value("grok-workspace-turn"), "turn");
     }
 
-    /// SessionMetrics must not attempt Mixpanel profile engage — sync_profile
-    /// is a no-op unless mode is fully Enabled.
+    /// The build kill switch must override an explicitly enabled telemetry
+    /// mode without creating a client or requiring a Tokio runtime.
     #[test]
-    fn sync_profile_is_noop_in_session_metrics_mode() {
+    fn aggregate_telemetry_build_switch_disables_session_metrics() {
         // No tokio runtime here BY DESIGN: if the gate wrongly falls through,
         // sync_profile's tokio::spawn panics and fails this test. Converting
         // this to #[tokio::test] would silently turn it into theater.
@@ -449,10 +461,7 @@ mod tests {
         );
         // Explicit call must no-op too (init already invoked it once).
         sync_profile();
-        assert!(
-            is_session_metrics_enabled(),
-            "client must be live for session metrics"
-        );
+        assert!(!is_session_metrics_enabled());
         assert!(!is_enabled(), "product analytics must stay off");
     }
 
