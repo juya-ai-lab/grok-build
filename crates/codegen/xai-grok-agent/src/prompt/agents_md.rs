@@ -223,9 +223,7 @@ async fn read_agents_config_with_roots(
                 },
             );
         }
-        if xai_grok_config::CURSOR_COMPAT_ENABLED
-            && (compat.cursor.agents || compat.cursor.rules)
-        {
+        if xai_grok_config::CURSOR_COMPAT_ENABLED && (compat.cursor.agents || compat.cursor.rules) {
             add_discovery_root(
                 &mut home_roots,
                 home.join(".cursor"),

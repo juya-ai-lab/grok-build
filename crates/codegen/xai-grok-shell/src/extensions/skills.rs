@@ -587,7 +587,9 @@ mod tests {
             ".grok source must remain visible: {sources:?}"
         );
         assert!(
-            sources.iter().any(|(path, _)| path.contains("/.agents/skills")),
+            sources
+                .iter()
+                .any(|(path, _)| path.contains("/.agents/skills")),
             ".agents standard source must remain visible: {sources:?}"
         );
         assert!(
@@ -689,11 +691,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
 
-        for raw in [
-            ".claude/skills",
-            ".codex/skills",
-            ".claude.json",
-        ] {
+        for raw in [".claude/skills", ".codex/skills", ".claude.json"] {
             assert!(
                 resolve_validated_skill_mutation_path(raw, &cwd.to_string_lossy()).is_err(),
                 "{raw}"
