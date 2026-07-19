@@ -40,6 +40,86 @@ const SUPPORTED_EVENTS: &[&str] = &[
     "subagent_end",
 ];
 
+fn is_disabled_vendor_env(name: &str) -> bool {
+    starts_with_ignore_ascii_case(name, "CLAUDE_")
+        || starts_with_ignore_ascii_case(name, "CODEX_")
+        || starts_with_ignore_ascii_case(name, "GROK_CLAUDE_")
+        || starts_with_ignore_ascii_case(name, "GROK_CODEX_")
+}
+
+fn starts_with_ignore_ascii_case(name: &str, prefix: &str) -> bool {
+    name.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+}
+
+fn expand_plugin_value(source: &str, plugin_root: &str, plugin_data: &str) -> String {
+    let substituted = substitute_env_vars(source, plugin_root, plugin_data);
+    expand_non_vendor_env(&substituted)
+}
+
+/// Expand ordinary environment references while preserving every Claude/Codex
+/// signal literally. Splitting around disabled references avoids a sentinel
+/// that could collide with adversarial input or an expanded ordinary value.
+fn expand_non_vendor_env(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut cursor = 0;
+    let mut pos = 0;
+
+    while pos < bytes.len() {
+        if bytes[pos] != b'$' || pos + 1 >= bytes.len() {
+            pos += 1;
+            continue;
+        }
+
+        let (name_start, name_end, reference_end) = if bytes[pos + 1] == b'{' {
+            let name_start = pos + 2;
+            let mut name_end = name_start;
+            while name_end < bytes.len()
+                && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'_')
+            {
+                name_end += 1;
+            }
+            let Some(close_offset) = input[name_end..].find('}') else {
+                pos += 1;
+                continue;
+            };
+            (name_start, name_end, name_end + close_offset + 1)
+        } else if bytes[pos + 1].is_ascii_alphabetic() || bytes[pos + 1] == b'_' {
+            let name_start = pos + 1;
+            let mut name_end = name_start + 1;
+            while name_end < bytes.len()
+                && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'_')
+            {
+                name_end += 1;
+            }
+            (name_start, name_end, name_end)
+        } else {
+            pos += 1;
+            continue;
+        };
+
+        let name = &input[name_start..name_end];
+        if name.is_empty() || !is_disabled_vendor_env(name) {
+            pos += 1;
+            continue;
+        }
+
+        out.push_str(&xai_grok_config::expand_env_vars_in_string(
+            &input[cursor..pos],
+        ));
+        out.push_str(&input[pos..reference_end]);
+        cursor = reference_end;
+        pos = reference_end;
+    }
+
+    out.push_str(&xai_grok_config::expand_env_vars_in_string(
+        &input[cursor..],
+    ));
+    out
+}
+
 /// Parse plugin hook files with pre-filtering and env injection.
 ///
 /// For each trusted plugin with hooks, this function:
@@ -56,7 +136,15 @@ pub fn parse_plugin_hooks(
     plugin_root: &str,
     plugin_data: &str,
 ) -> (Vec<HookSpec>, Vec<String>) {
-    let content = match std::fs::read_to_string(hooks_path) {
+    let Some(hooks_path) = xai_grok_config::validate_grok_path(hooks_path) else {
+        return (
+            vec![],
+            vec![format!(
+                "plugin {plugin_name}: refusing hooks file under Claude/Codex vendor state"
+            )],
+        );
+    };
+    let content = match std::fs::read_to_string(&hooks_path) {
         Ok(c) => c,
         Err(e) => {
             return (
@@ -70,7 +158,7 @@ pub fn parse_plugin_hooks(
     };
 
     let (specs, warnings) =
-        process_hooks_content(&content, hooks_path, plugin_name, plugin_root, plugin_data);
+        process_hooks_content(&content, &hooks_path, plugin_name, plugin_root, plugin_data);
     tracing::debug!(
         plugin = plugin_name,
         hooks_count = specs.len(),
@@ -143,52 +231,44 @@ fn process_hooks_content(
         warnings.push(msg);
     }
 
-    // Build plugin env vars. `GROK_PLUGIN_*` is the native contract;
-    // `CLAUDE_PLUGIN_*` aliases the same values for external hooks that read
-    // those names.
+    // Build the native plugin environment. Claude/Codex compatibility signals
+    // are deliberately not injected, regardless of where discovery happened.
     let plugin_env: HashMap<String, String> = HashMap::from([
         ("GROK_PLUGIN_ROOT".to_string(), plugin_root.to_string()),
-        ("CLAUDE_PLUGIN_ROOT".to_string(), plugin_root.to_string()),
         ("GROK_PLUGIN_DATA".to_string(), plugin_data.to_string()),
-        ("CLAUDE_PLUGIN_DATA".to_string(), plugin_data.to_string()),
     ]);
 
     // Inject env vars and update source labels.
     //
-    // The plugin adapter owns the keys in `plugin_env` (CLAUDE_PLUGIN_ROOT
-    // etc.), so plugin-injected values must always win over any
+    // The plugin adapter owns the `GROK_PLUGIN_*` keys, so plugin-injected
+    // values must always win over any
     // user-declared `env` on the hook JSON for those specific keys --
     // otherwise a plugin author could (deliberately or by accident) pin
     // the plugin root to an arbitrary path and break the plugin
     // contract. User-declared keys not owned by the plugin are
     // preserved.
     for spec in &mut specs {
+        spec.extra_env.retain(|key, _| !is_disabled_vendor_env(key));
         for (k, v) in &plugin_env {
             spec.extra_env.insert(k.clone(), v.clone());
         }
         // Prefix name with plugin namespace for identification
         spec.name = format!("plugin/{}/{}", plugin_name, spec.name);
-        // Substitute plugin env vars in command paths at config-load time so
-        // that hooks like `${CLAUDE_PLUGIN_ROOT}/hooks/foo.sh` resolve to the
-        // real plugin directory regardless of which spawn branch the runner
-        // takes (mirrors what managed_mcp does for MCP server commands).
-        if let Some(cmd) = &spec.command {
-            let cmd_str = cmd.to_string_lossy();
-            // Mirror what `managed_mcp::load_plugin_mcp_servers_from_config`
-            // does for plugin MCP server commands: first substitute the
-            // plugin-specific placeholders (`${CLAUDE_PLUGIN_ROOT}` and
-            // friends), then run the result through the generic
-            // `${VAR}` / `$VAR` env expansion. Doing both passes at
-            // config-load time keeps hook env var resolution consistent
-            // with managed MCP server resolution and avoids relying on
-            // the runtime `sh -c` shell-metachar heuristic in
-            // `xai-grok-hooks::runner::command` for env vars whose
-            // values are already known at load time.
-            let substituted = substitute_env_vars(&cmd_str, plugin_root, plugin_data);
-            let expanded = xai_grok_config::expand_env_vars_in_string(&substituted);
-            if expanded != cmd_str {
-                spec.command = Some(PathBuf::from(expanded));
-            }
+        // Substitute native plugin env vars in command paths at config-load
+        // time, regardless of which spawn branch the runner takes.
+        if let Some(command_source) = spec.command_raw.clone().or_else(|| {
+            spec.command
+                .as_ref()
+                .map(|cmd| cmd.to_string_lossy().into_owned())
+        }) {
+            // First substitute Grok's plugin-specific placeholders, then run
+            // the result through generic env expansion while protecting every
+            // Claude/Codex environment signal from compatibility substitution.
+            let expanded = expand_plugin_value(&command_source, plugin_root, plugin_data);
+            spec.command = Some(PathBuf::from(expanded));
+        }
+        if let Some(url_source) = spec.url_raw.clone().or_else(|| spec.url.clone()) {
+            spec.url = Some(expand_plugin_value(&url_source, plugin_root, plugin_data));
         }
     }
 
@@ -347,10 +427,7 @@ mod tests {
             specs[0].extra_env.get("GROK_PLUGIN_ROOT").unwrap(),
             "/path/to/plugin"
         );
-        assert_eq!(
-            specs[0].extra_env.get("CLAUDE_PLUGIN_ROOT").unwrap(),
-            "/path/to/plugin"
-        );
+        assert!(!specs[0].extra_env.contains_key("CLAUDE_PLUGIN_ROOT"));
         assert_eq!(
             specs[0].extra_env.get("GROK_PLUGIN_DATA").unwrap(),
             "/path/to/data"
@@ -358,6 +435,35 @@ mod tests {
 
         // Should have a warning about FutureEvent
         assert!(warnings.iter().any(|w| w.contains("FutureEvent")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_plugin_hooks_revalidates_path_after_discovery() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let discovered_path = tmp.path().join("ordinary-plugin/hooks/hooks.json");
+        std::fs::create_dir_all(discovered_path.parent().unwrap()).unwrap();
+        std::fs::write(&discovered_path, r#"{"hooks":{}}"#).unwrap();
+
+        let vendor_path = tmp.path().join(".claude/plugins/leak/hooks.json");
+        std::fs::create_dir_all(vendor_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &vendor_path,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"leak"}]}]}}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(&discovered_path).unwrap();
+        symlink(&vendor_path, &discovered_path).unwrap();
+
+        let (specs, warnings) = parse_plugin_hooks(&discovered_path, "swapped", "/plugin", "/data");
+        assert!(specs.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("vendor state"))
+        );
     }
 
     #[test]
@@ -411,12 +517,8 @@ mod tests {
         assert!(warnings.iter().any(|w| w.contains("FutureEvent")));
     }
 
-    /// Regression: hook commands that reference
-    /// `${CLAUDE_PLUGIN_ROOT}` (or its `GROK_PLUGIN_ROOT` alias) must be
-    /// substituted at config-load time so the runner spawns the real
-    /// plugin path. Without substitution the runner's pre-spawn env-var
-    /// check refuses to run such hooks (the dispatcher fail-opens so the
-    /// tool call itself is not blocked, but the hook never runs).
+    /// Grok plugin tokens are substituted at config-load time, while Claude
+    /// Code tokens remain literal and receive no compatibility treatment.
     #[test]
     fn parse_plugin_hooks_substitutes_plugin_root_in_command() {
         let value = serde_json::json!({
@@ -445,18 +547,9 @@ mod tests {
             .iter()
             .map(|s| s.command.as_ref().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert!(commands.contains(&"/opt/plugins/gb1183/hooks/pre.sh".to_string()));
+        assert!(commands.contains(&"${CLAUDE_PLUGIN_ROOT}/hooks/pre.sh".to_string()));
         assert!(commands.contains(&"/opt/plugins/gb1183/hooks/alias.sh".to_string()));
-        assert!(commands.contains(&"/var/plugins/gb1183/cache/post.sh".to_string()));
-
-        // None of the resolved commands should still contain the literal
-        // `${...}` placeholder.
-        for cmd in &commands {
-            assert!(
-                !cmd.contains("${"),
-                "command still contains placeholder: {cmd}"
-            );
-        }
+        assert!(commands.contains(&"${CLAUDE_PLUGIN_DATA}/cache/post.sh".to_string()));
 
         // The plugin adapter must NOT mutate
         // `command_raw`. The pager UI / ACP DTO surface the raw form
@@ -496,7 +589,7 @@ mod tests {
     /// depends on the runtime `sh -c` heuristic in
     /// `xai-grok-hooks::runner::command`, which can fail for hooks
     /// whose handler doesn't otherwise contain shell metacharacters.
-    /// Plugin hooks must not be double-expanded: a `${CLAUDE_PLUGIN_ROOT}`
+    /// Plugin hooks must not be double-expanded: a `${GROK_PLUGIN_ROOT}`
     /// reference resolves to the plugin root exactly once, and the result
     /// contains no leftover `$` placeholders. This is the contract the
     /// hooks_adapter has long held, and it must continue to hold
@@ -512,7 +605,7 @@ mod tests {
             "hooks": {
                 "PreToolUse": [
                     {"hooks": [
-                        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/x.sh"}
+                        {"type": "command", "command": "${GROK_PLUGIN_ROOT}/x.sh"}
                     ]}
                 ]
             }
@@ -543,14 +636,12 @@ mod tests {
     /// Plugin hook JSON may declare its own `env` map. The user-declared
     /// keys land in `extra_env`, but the plugin adapter MUST override
     /// any user-declared value for keys the plugin owns
-    /// (CLAUDE_PLUGIN_ROOT, GROK_PLUGIN_ROOT, CLAUDE_PLUGIN_DATA,
-    /// GROK_PLUGIN_DATA). This preserves the plugin contract while still
-    /// supporting user-defined env vars on plugin hooks.
+    /// (`GROK_PLUGIN_ROOT` and `GROK_PLUGIN_DATA`). Disabled Claude/Codex
+    /// compatibility keys are removed, while unrelated user env is preserved.
     #[test]
     fn parse_plugin_hooks_user_env_merged_with_plugin_precedence() {
-        // Exercise ALL FOUR plugin-owned keys, not just
-        // CLAUDE_PLUGIN_ROOT. A regression that only iterates one key
-        // would otherwise pass.
+        // Claude/Codex compatibility keys must not survive the adapter,
+        // including mixed-case spellings and Grok-prefixed aliases.
         let value = serde_json::json!({
             "hooks": {
                 "PreToolUse": [
@@ -561,6 +652,10 @@ mod tests {
                             "env": {
                                 "FOO": "bar",
                                 "CLAUDE_PLUGIN_ROOT": "/user/wins?",
+                                "cLaUdE_SESSION": "user-session",
+                                "CoDeX_HoMe": "/user/codex",
+                                "gRoK_cLaUdE_SESSION": "grok-claude-session",
+                                "GrOk_CoDeX_TOKEN": "grok-codex-token",
                                 "GROK_PLUGIN_ROOT": "/user/wins?",
                                 "CLAUDE_PLUGIN_DATA": "/user/wins?",
                                 "GROK_PLUGIN_DATA": "/user/wins?"
@@ -588,14 +683,9 @@ mod tests {
             "user-declared env keys must survive plugin merge"
         );
 
-        // All four plugin-owned keys: plugin wins, user's attempt is
-        // overridden. CLAUDE_PLUGIN_ROOT and GROK_PLUGIN_ROOT both map
-        // to plugin_root; CLAUDE_PLUGIN_DATA and GROK_PLUGIN_DATA both
-        // map to plugin_data.
+        // Native plugin-owned keys override user values.
         for (key, expected) in [
-            ("CLAUDE_PLUGIN_ROOT", "/actual/plugin/root"),
             ("GROK_PLUGIN_ROOT", "/actual/plugin/root"),
-            ("CLAUDE_PLUGIN_DATA", "/actual/plugin/data"),
             ("GROK_PLUGIN_DATA", "/actual/plugin/data"),
         ] {
             assert_eq!(
@@ -604,6 +694,47 @@ mod tests {
                 "plugin-injected key {key} must override user-declared value"
             );
         }
+        for key in [
+            "CLAUDE_PLUGIN_ROOT",
+            "CLAUDE_PLUGIN_DATA",
+            "cLaUdE_SESSION",
+            "CoDeX_HoMe",
+            "gRoK_cLaUdE_SESSION",
+            "GrOk_CoDeX_TOKEN",
+        ] {
+            assert!(
+                !specs[0].extra_env.contains_key(key),
+                "disabled vendor key survived plugin env filtering: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_value_expansion_preserves_vendor_signals_case_insensitively() {
+        let claude_key = "cLaUdE_HOOKS_ADAPTER_TEMPLATE_TEST";
+        let codex_key = "gRoK_cOdEx_HOOKS_ADAPTER_TEMPLATE_TEST";
+        let ordinary_key = "GROK_HOOKS_ADAPTER_ORDINARY_TEMPLATE_TEST";
+        // SAFETY: all keys are unique to this test and restored before asserts.
+        unsafe {
+            std::env::set_var(claude_key, "claude-leak");
+            std::env::set_var(codex_key, "codex-leak");
+            std::env::set_var(ordinary_key, "ordinary-value");
+        }
+
+        let source = format!("${{{claude_key}}}:${codex_key}:${{{ordinary_key}}}");
+        let expanded = expand_plugin_value(&source, "/plugin", "/data");
+
+        // SAFETY: restore the unique test keys before making assertions.
+        unsafe {
+            std::env::remove_var(claude_key);
+            std::env::remove_var(codex_key);
+            std::env::remove_var(ordinary_key);
+        }
+
+        assert_eq!(
+            expanded,
+            format!("${{{claude_key}}}:${codex_key}:ordinary-value")
+        );
     }
 
     #[test]

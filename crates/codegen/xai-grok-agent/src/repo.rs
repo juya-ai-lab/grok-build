@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 /// and ONE upward walk.
 ///
 /// The folder-trust gate's `repo_configs_present` probes a dozen repo-local
-/// code-exec markers (`.mcp.json`, `.grok/config.toml`, `.claude/settings.json`,
+/// code-exec markers (`.mcp.json`, `.grok/config.toml`, project-local hooks,
 /// project plugin/agent dirs, …) back-to-back on the agent startup path. Each
 /// marker walker used to run its own `discover` + cwd→root walk; sharing one
 /// `RepoDirChain` collapses that to a single traversal (each redundant syscall
@@ -42,6 +42,20 @@ pub struct RepoDirChain {
 impl RepoDirChain {
     /// Resolve the chain for `cwd`: ONE `git2` discovery + ONE upward walk.
     pub fn resolve(cwd: &Path) -> Self {
+        // This primitive is shared by every repo-local discovery surface.  It
+        // must reject vendor-owned state before `git2::discover`,
+        // canonicalization, or marker probes touch the filesystem; filtering
+        // only the paths produced by the walk is already too late.
+        if xai_grok_config::validate_grok_path(cwd).is_none() {
+            tracing::warn!(
+                path = %cwd.display(),
+                "refusing repo discovery inside Claude/Codex vendor state"
+            );
+            return Self {
+                git_root: None,
+                dirs: Vec::new(),
+            };
+        }
         let git_root = git2::Repository::discover(cwd)
             .ok()
             .and_then(|repo| repo.workdir().map(|p| p.to_path_buf()))
@@ -90,23 +104,6 @@ fn is_home_dir(path: &Path) -> bool {
     };
     let canon = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     canon(path) == canon(&home)
-}
-
-/// Existing `<dir>/<subdir>` directories under each dir of a precomputed
-/// cwd→git-root chain ([`RepoDirChain::dirs`]), in chain order (cwd-first, then
-/// each `subdirs` entry in order). Shared body for the project plugin/agent dir
-/// walkers so the byte-identical double-loop lives in one place.
-pub(crate) fn existing_subdirs_along(chain_dirs: &[PathBuf], subdirs: &[&str]) -> Vec<PathBuf> {
-    let mut found = Vec::new();
-    for dir in chain_dirs {
-        for subdir in subdirs {
-            let candidate = dir.join(subdir);
-            if candidate.is_dir() {
-                found.push(candidate);
-            }
-        }
-    }
-    found
 }
 
 #[cfg(test)]
@@ -163,6 +160,18 @@ mod tests {
             dunce::canonicalize(&root).unwrap(),
             dunce::canonicalize(tmp.path()).unwrap()
         );
+    }
+
+    #[test]
+    fn resolve_rejects_vendor_state_before_repo_discovery() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_repo = tmp.path().join(".codex").join("project");
+        std::fs::create_dir_all(&vendor_repo).unwrap();
+        git2::Repository::init(&vendor_repo).unwrap();
+
+        let chain = RepoDirChain::resolve(&vendor_repo);
+        assert!(chain.git_root.is_none());
+        assert!(chain.dirs.is_empty());
     }
 
     #[test]

@@ -89,6 +89,13 @@ impl ParsedPermissions {
 ///     the vendor schema) and are used only when the nested key is **absent** —
 ///     not when it is present but the wrong type.
 pub fn load_claude_settings(path: &Path) -> Option<ClaudeSettings> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return None;
+    }
+    load_claude_settings_unchecked(path)
+}
+
+fn load_claude_settings_unchecked(path: &Path) -> Option<ClaudeSettings> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
@@ -136,6 +143,11 @@ pub fn load_claude_settings(path: &Path) -> Option<ClaudeSettings> {
         additional_directories,
         env,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn load_claude_settings_for_test(path: &Path) -> Option<ClaudeSettings> {
+    load_claude_settings_unchecked(path)
 }
 
 /// Canonical key is `permissions.defaultMode`.
@@ -345,6 +357,9 @@ impl JsonTypeName for serde_json::Value {
 /// Returns `true` if any `.claude/` configuration files exist in the project
 /// or user home directory.
 pub fn has_claude_compat(cwd: &Path) -> bool {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return false;
+    }
     find_claude_settings_paths(cwd).iter().any(|p| p.exists())
 }
 
@@ -352,6 +367,9 @@ pub fn has_claude_compat(cwd: &Path) -> bool {
 /// for conflicts as documented below).
 /// `defaultMode` uses scope precedence: the most specific file that sets it wins.
 pub fn find_claude_settings_paths(cwd: &Path) -> Vec<PathBuf> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return Vec::new();
+    }
     let mut paths = global_claude_settings_paths();
 
     // Project paths (higher priority — closer to cwd wins)
@@ -372,6 +390,9 @@ pub fn find_claude_settings_paths(cwd: &Path) -> Vec<PathBuf> {
 /// so a path returned here reliably tests as global in the import scanner's
 /// `is_global` check.
 fn global_claude_settings_paths() -> Vec<PathBuf> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return Vec::new();
+    }
     let mut paths = Vec::new();
     if let Some(home) = dirs::home_dir() {
         let global = home.join(".claude");
@@ -388,6 +409,9 @@ fn global_claude_settings_paths() -> Vec<PathBuf> {
 /// `env` is injected into every spawned subprocess — must flip the folder
 /// untrusted, not just one at the git root.
 pub fn project_claude_settings_present(cwd: &Path) -> bool {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return false;
+    }
     collect_project_claude_paths(cwd)
         .iter()
         .any(|p| p.is_file())
@@ -466,6 +490,9 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
 /// false it is dropped — an untrusted clone must not contribute it; the user's
 /// own `~/.claude` env is always loaded.
 pub fn load_claude_env_with_project(cwd: &Path, project_trusted: bool) -> HashMap<String, String> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return HashMap::new();
+    }
     // Phase 2 cutoff: if the user has imported, skip reading .claude/ at runtime.
     if is_claude_import_marked_with_log("load_claude_env_with_project") {
         return HashMap::new();
@@ -510,6 +537,9 @@ pub fn load_claude_env_with_project(cwd: &Path, project_trusted: bool) -> HashMa
 /// True when the user marked Claude settings imported (`[claude_compat].imported`
 /// in config.toml, or the test override). Public so gate-mirroring callers stay consistent.
 pub fn is_claude_import_marked() -> bool {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return true;
+    }
     // Test escape hatch: shell tests call `refresh_marker_cache(true)` which
     // lives in xai-grok-shell (inaccessible from here at runtime). They also
     // set this env var so the workspace-resident gate honours the override
@@ -551,4 +581,26 @@ pub(crate) fn is_claude_import_marked_with_log(gate_name: &'static str) -> bool 
         });
     }
     marked
+}
+
+#[cfg(test)]
+mod build_disabled_tests {
+    use super::*;
+
+    #[test]
+    fn public_claude_settings_surface_is_fail_closed() {
+        assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        let settings_path = claude_dir.join("settings.json");
+        std::fs::write(&settings_path, r#"{"env":{"MUST_NOT_LOAD":"1"}}"#).unwrap();
+
+        assert!(load_claude_settings(&settings_path).is_none());
+        assert!(find_claude_settings_paths(tmp.path()).is_empty());
+        assert!(!has_claude_compat(tmp.path()));
+        assert!(!project_claude_settings_present(tmp.path()));
+        assert!(load_claude_env_with_project(tmp.path(), true).is_empty());
+        assert!(load_claude_env_with_project(tmp.path(), false).is_empty());
+    }
 }

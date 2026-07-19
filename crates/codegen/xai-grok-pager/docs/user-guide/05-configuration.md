@@ -380,9 +380,11 @@ disabled = ["wip-skill"]              # skill names to keep listed but inactive
 
 ### Harness Compatibility
 
-Control vendor compatibility for Cursor, Claude, and Codex. Every cell defaults to `true`; session cells remain staged/inert until the foreign-session scanner consumes them.
-
-Session cells remain staged until a foreign-session scanner consumes them. Each tool requires both its `sessions` cell and corresponding `resume-claude`, `resume-codex`, or `resume-cursor` skill; a missing skill means zero foreign-session filesystem I/O.
+This build only permits Cursor compatibility. Claude Code and Codex
+compatibility are compile-time disabled: TOML, environment variables, remote
+settings, injected skills, and session-picker data cannot enable them. Their
+state roots (`.claude`, `.codex`, and Codex's `.agents` skill root) are not
+scanned as Grok configuration.
 
 ```toml
 [compat.cursor]
@@ -393,25 +395,26 @@ mcps = true       # scan ~/.cursor/mcp.json and <cwd>/.cursor/mcp.json
 hooks = true      # scan ~/.cursor/hooks.json and <cwd>/.cursor/hooks.json
 sessions = true   # staged; no scanner consumer yet
 
-[compat.claude]
-skills = true     # scan ~/.claude/skills/ and <cwd>/.claude/skills/
-rules = true      # scan ~/.claude/rules/ and <dir>/.claude/rules/
-agents = true     # scan ~/.claude/ and <dir>/.claude/CLAUDE*.md
-mcps = true       # scan ~/.claude.json for MCP servers
-hooks = true      # scan ~/.claude/settings.json for hooks
-sessions = true   # staged; no scanner consumer yet
-
-[compat.codex]
-sessions = true   # staged; no scanner consumer yet
 ```
 
-Codex `skills`, `rules`, `agents`, `mcps`, and `hooks` cells are reserved and currently inert; they do not enable `.codex` discovery.
+Claude and Codex keys may still deserialize as part of the shared config schema,
+but every such cell resolves to `false`. The `resume-claude` and `resume-codex`
+skills and the former Codex agent/toolset profile are also rejected.
 
-For Claude and Cursor, `rules` and `agents` are independent: disabling named instruction files does not disable either the home or project rules directory, and disabling rules does not disable named files. Claude's `agents` cell gates home-level `~/.claude/` named files and project `<dir>/.claude/CLAUDE*.md`; generic top-level `Claude.md`, `CLAUDE.md`, and `CLAUDE.local.md` remain recognized. Project rule paths are scanned at every directory from the repo root to the current directory.
+Cursor cells can be toggled via environment variable or `config.toml`. See the
+environment-variables reference for the env var names. Resolution order for
+Cursor is: env var > config.toml > default (on).
 
-Each cell can be toggled via environment variable or `config.toml`. See the
-environment-variables reference for the env var names. Resolution order:
-env var > config.toml > default (on).
+### Content upload boundary
+
+This fork keeps ordinary aggregate telemetry configurable, but compile-time
+disables content-bearing upload paths: trace artifacts, session
+replication/writeback, relay mirroring, session sharing, workspace upload
+queues, and prompt/tool-detail OTEL fields. Configuration, environment
+variables, managed requirements, and remote settings cannot re-enable them.
+Model inference still sends the prompt and context selected for a request to
+the configured model endpoint; that traffic is the model request itself, not a
+separate file or session upload channel.
 
 `grok inspect` reports cells that still need session-start resolution as
 `?` until a value is available; cells with an explicit env or TOML value

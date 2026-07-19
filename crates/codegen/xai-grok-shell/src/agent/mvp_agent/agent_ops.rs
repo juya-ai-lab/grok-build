@@ -488,6 +488,9 @@ impl MvpAgent {
     pub(super) fn build_registry_config(
         &self,
     ) -> Option<crate::session::RegistryConfig> {
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            return None;
+        }
         let remote = self
             .cfg
             .borrow()
@@ -605,7 +608,8 @@ impl MvpAgent {
     }
     /// `true` when the agent runs in writeback storage mode.
     pub(crate) fn is_writeback_storage(&self) -> bool {
-        matches!(self.storage_mode, StorageMode::Writeback)
+        xai_grok_config::CONTENT_UPLOADS_ENABLED
+            && matches!(self.storage_mode, StorageMode::Writeback)
     }
     /// Resolved cli-chat-proxy base for session features (via
     /// `proxy_url`). Not for the deployment-config fetch.
@@ -1449,7 +1453,11 @@ impl MvpAgent {
                 );
         }
         crate::upload::trace::spawn_purge_stale_upload_scratch();
-        let storage_mode = cfg.storage_mode;
+        let storage_mode = if xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            cfg.storage_mode
+        } else {
+            StorageMode::Local
+        };
         let default_yolo_mode = cfg.default_yolo_mode;
         let default_auto_mode = cfg.default_auto_mode;
         let tui_mode = cfg.mode == crate::agent::config::AgentMode::Tui;
@@ -1457,7 +1465,10 @@ impl MvpAgent {
         let has_xai_auth = auth_manager
             .current_or_expired()
             .is_some_and(|a| a.is_xai_auth());
-        let relay_sync_enabled = tui_mode && relay_config_enabled && has_xai_auth;
+        let relay_sync_enabled = xai_grok_config::CONTENT_UPLOADS_ENABLED
+            && tui_mode
+            && relay_config_enabled
+            && has_xai_auth;
         let config_root = crate::config::load_effective_config().ok();
         let empty_config = toml::Value::Table(toml::map::Map::new());
         let raw = config_root.as_ref().unwrap_or(&empty_config);
@@ -1954,7 +1965,7 @@ impl MvpAgent {
         session_id: &str,
         session_info: &crate::session::info::Info,
     ) -> Option<crate::relay::RelaySync> {
-        if !self.relay_sync_enabled {
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED || !self.relay_sync_enabled {
             return None;
         }
         let auth = self.auth_manager.current_or_expired()?;
@@ -2179,6 +2190,9 @@ impl MvpAgent {
         crate::upload::turn::TraceUploadReason,
     ) {
         use crate::upload::turn::TraceUploadReason;
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            return (None, TraceUploadReason::FeatureOff);
+        }
         if self.is_data_collection_disabled() {
             crate::upload::trace::spawn_startup_spill_reconcile(
                 crate::util::grok_home::grok_home(),
@@ -2741,6 +2755,18 @@ impl MvpAgent {
         model_agent_type: Option<&str>,
     ) -> xai_grok_agent::AgentDefinition {
         use xai_grok_agent::AgentDefinition;
+        let accept_definition = |def: AgentDefinition, source: &'static str| {
+            if xai_grok_agent::config::is_build_disabled_agent_name(&def.name) {
+                tracing::warn!(
+                    agent_name = %def.name,
+                    source,
+                    "Ignoring build-disabled reserved agent profile"
+                );
+                None
+            } else {
+                Some(def)
+            }
+        };
         let grok_agent_env_set = std::env::var("GROK_AGENT")
             .ok()
             .is_some_and(|s| !s.trim().is_empty());
@@ -2750,13 +2776,16 @@ impl MvpAgent {
         if !grok_agent_env_set && !config_agent_explicitly_set
             && model_requires_strict_harness && let Some(required) = model_agent_type
             && let Some(def) = xai_grok_agent::discovery::by_name_in_cwd(required, cwd)
+            && let Some(def) = accept_definition(def, "model agent_type")
         {
             tracing::info!(
                 agent_name = % def.name, "Using agent definition from model agent_type"
             );
             return def;
         }
-        if let Some(def) = acp_agent_profile {
+        if let Some(def) = acp_agent_profile
+            && let Some(def) = accept_definition(def, "ACP agent profile")
+        {
             tracing::info!(
                 agent_name = % def.name,
                 "Using agent profile from ACP _meta.agentProfile"
@@ -2765,7 +2794,11 @@ impl MvpAgent {
         }
         if let Some(path) = agent_profile_path {
             match AgentDefinition::from_file(path) {
-                Ok(def) => return def,
+                Ok(def) => {
+                    if let Some(def) = accept_definition(def, "CLI agent profile") {
+                        return def;
+                    }
+                }
                 Err(e) => {
                     tracing::error!(
                         path = % path.display(), error = % e,
@@ -2785,7 +2818,9 @@ impl MvpAgent {
                         agent_name = % def.name, path = % path.display(),
                         "Using agent definition from config.toml [agent] definition"
                     );
-                    return def;
+                    if let Some(def) = accept_definition(def, "config agent definition") {
+                        return def;
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -2801,7 +2836,9 @@ impl MvpAgent {
                 agent_name = % name,
                 "Resolving agent definition from config.toml [agent] name"
             );
-            if let Some(def) = xai_grok_agent::discovery::by_name_in_cwd(name, cwd) {
+            if let Some(def) = xai_grok_agent::discovery::by_name_in_cwd(name, cwd)
+                && let Some(def) = accept_definition(def, "config agent name")
+            {
                 return def;
             }
             tracing::warn!(
@@ -2842,7 +2879,9 @@ impl MvpAgent {
                 resolved_agent = % resolved.name, model_agent_type = % required,
                 "resolve_agent_definition: model requires different agent, re-resolving"
             );
-            if let Some(def) = xai_grok_agent::discovery::by_name_in_cwd(required, cwd) {
+            if let Some(def) = xai_grok_agent::discovery::by_name_in_cwd(required, cwd)
+                && let Some(def) = accept_definition(def, "model agent_type fallback")
+            {
                 return def;
             }
             tracing::warn!(
@@ -2852,7 +2891,8 @@ impl MvpAgent {
                 required,
             );
         }
-        resolved
+        accept_definition(resolved, "resolved agent selection")
+            .unwrap_or_else(AgentDefinition::grok_build_plan)
     }
     /// Extract per-client terminal/fs capabilities from request `_meta`
     /// (injected by the leader). Falls back to the shared `init` OnceCell.

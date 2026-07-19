@@ -121,8 +121,13 @@ fn find_skill<'a>(name: &str, skills: &'a [SkillInfo]) -> FindSkillResult<'a> {
 
 /// Load skill content from its SKILL.md file, stripping YAML frontmatter.
 async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
-    let path = Path::new(&skill.path);
-    match tokio::fs::read_to_string(path).await {
+    let path = xai_grok_config::validate_grok_path(Path::new(&skill.path)).ok_or_else(|| {
+        format!(
+            "Refusing to read skill file '{}' from Claude/Codex vendor state",
+            skill.path
+        )
+    })?;
+    match tokio::fs::read_to_string(&path).await {
         Ok(content) => Ok(extract_skill_body(&content)),
         Err(e) => Err(format!("Failed to read skill file '{}': {}", skill.path, e)),
     }
@@ -135,8 +140,11 @@ async fn list_skill_files(skill: &SkillInfo, limit: usize) -> Vec<String> {
         Some(d) => d,
         None => return vec![],
     };
+    let Some(dir) = xai_grok_config::validate_grok_path(dir) else {
+        return vec![];
+    };
 
-    let mut entries = match tokio::fs::read_dir(dir).await {
+    let mut entries = match tokio::fs::read_dir(&dir).await {
         Ok(entries) => entries,
         Err(_) => return vec![],
     };
@@ -152,6 +160,9 @@ async fn list_skill_files(skill: &SkillInfo, limit: usize) -> Vec<String> {
             .file_name()
             .is_some_and(|n| n.eq_ignore_ascii_case("SKILL.md"))
         {
+            continue;
+        }
+        if xai_grok_config::validate_grok_path(&path).is_none() {
             continue;
         }
         files.push(path.display().to_string());
@@ -662,6 +673,58 @@ mod tests {
         assert!(!output.success);
         assert!(output.tool_result.contains("Failed to load"));
         assert!(output.error.is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn skill_read_revalidates_path_after_discovery() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        let discovered_path = tmp.path().join("ordinary-skill/SKILL.md");
+        std::fs::create_dir_all(discovered_path.parent().unwrap()).unwrap();
+        std::fs::write(&discovered_path, "safe instructions").unwrap();
+        let skill = make_test_skill(
+            "swapped",
+            SkillScope::Local,
+            discovered_path.to_str().unwrap(),
+        );
+
+        let vendor_path = tmp.path().join(".claude/skills/swapped/SKILL.md");
+        std::fs::create_dir_all(vendor_path.parent().unwrap()).unwrap();
+        std::fs::write(&vendor_path, "vendor instructions").unwrap();
+        std::fs::remove_file(&discovered_path).unwrap();
+        symlink(&vendor_path, &discovered_path).unwrap();
+
+        let error = load_skill_content(&skill).await.unwrap_err();
+        assert!(error.contains("vendor state"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bundled_file_listing_revalidates_directory_after_discovery() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        let discovered_dir = tmp.path().join("ordinary-skill");
+        let discovered_path = discovered_dir.join("SKILL.md");
+        std::fs::create_dir_all(&discovered_dir).unwrap();
+        std::fs::write(&discovered_path, "safe instructions").unwrap();
+        let skill = make_test_skill(
+            "swapped",
+            SkillScope::Local,
+            discovered_path.to_str().unwrap(),
+        );
+
+        let vendor_dir = tmp.path().join(".agents/skills/swapped");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        std::fs::write(vendor_dir.join("SKILL.md"), "vendor instructions").unwrap();
+        std::fs::write(vendor_dir.join("secret.txt"), "vendor attachment").unwrap();
+        std::fs::remove_file(&discovered_path).unwrap();
+        std::fs::remove_dir(&discovered_dir).unwrap();
+        symlink(&vendor_dir, &discovered_dir).unwrap();
+
+        assert!(list_skill_files(&skill, 10).await.is_empty());
     }
 
     #[tokio::test]

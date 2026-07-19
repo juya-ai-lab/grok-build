@@ -288,6 +288,9 @@ fn parse_cli_agents(
         serde_json::from_str(json).map_err(|e| anyhow::anyhow!("--agents: invalid JSON: {e}"))?;
     let mut agents = Vec::with_capacity(map.len());
     for (name, mut value) in map {
+        if xai_grok_agent::config::is_build_disabled_agent_name(&name) {
+            anyhow::bail!("--agents: agent name 'codex' is reserved and build-disabled");
+        }
         if let serde_json::Value::Object(ref mut obj) = value {
             // Accept "prompt" as an alias for "promptBody".
             if !obj.contains_key("promptBody")
@@ -1802,6 +1805,21 @@ fn handle_ext_notification(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cli_agents_reserve_exact_codex_name_only() {
+        let error = super::parse_cli_agents(
+            r#"{"codex":{"name":"ordinary-helper","description":"reserved key"}}"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("reserved and build-disabled"));
+
+        let agents =
+            super::parse_cli_agents(r#"{"codex-helper":{"description":"ordinary helper"}}"#)
+                .unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "codex-helper");
+    }
+
     #[test]
     fn lifecycle_tracking_is_independent_of_wait_flag() {
         let mut pending = std::collections::HashSet::new();

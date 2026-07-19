@@ -1583,6 +1583,9 @@ fn resolve_agent_definition(
     subagent_type: &str,
     ctx: &SubagentSpawnContext,
 ) -> Option<xai_grok_agent::config::AgentDefinition> {
+    if xai_grok_agent::config::is_build_disabled_agent_name(subagent_type) {
+        return None;
+    }
     let mut def = xai_grok_agent::discovery::by_name_in_cwd_with_plugins(
         subagent_type,
         &ctx.parent_cwd,
@@ -1592,7 +1595,10 @@ fn resolve_agent_definition(
         ctx.agent_config.as_ref().and_then(|cfg| {
             cfg.cli_agents
                 .iter()
-                .find(|d| d.name == subagent_type)
+                .find(|d| {
+                    d.name == subagent_type
+                        && !xai_grok_agent::config::is_build_disabled_agent_name(&d.name)
+                })
                 .cloned()
         })
     })?;
@@ -1621,13 +1627,16 @@ pub(crate) fn validate_subagent_type(
     subagent_type: &str,
     ctx: &SubagentValidationContext,
 ) -> SubagentValidateTypeOutcome {
-    let resolves = ctx.cli_agent_names.iter().any(|n| n == subagent_type)
-        || xai_grok_agent::discovery::by_name_in_cwd_with_plugins(
+    let reserved = xai_grok_agent::config::is_build_disabled_agent_name(subagent_type);
+    let resolves = !reserved
+        && (ctx.cli_agent_names.iter().any(|n| {
+            n == subagent_type && !xai_grok_agent::config::is_build_disabled_agent_name(n)
+        }) || xai_grok_agent::discovery::by_name_in_cwd_with_plugins(
             subagent_type,
             &ctx.parent_cwd,
             ctx.plugin_registry.as_deref(),
         )
-        .is_some();
+        .is_some());
     if !resolves {
         let mut available: Vec<String> = xai_grok_agent::discovery::all_subagents_with_plugins(
             &ctx.parent_cwd,
@@ -1639,7 +1648,9 @@ pub(crate) fn validate_subagent_type(
         .collect();
         let mut seen: std::collections::HashSet<String> = available.iter().cloned().collect();
         for name in &ctx.cli_agent_names {
-            if !ctx.is_subagent_enabled(name) {
+            if xai_grok_agent::config::is_build_disabled_agent_name(name)
+                || !ctx.is_subagent_enabled(name)
+            {
                 continue;
             }
             if seen.insert(name.clone()) {

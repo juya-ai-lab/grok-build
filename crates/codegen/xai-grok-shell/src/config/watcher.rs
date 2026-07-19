@@ -79,23 +79,11 @@ pub enum ConfigChangeEvent {
     ProjectConfigChanged {
         path: PathBuf,
     },
-    /// A project-scoped MCP config file changed
-    /// (`<cwd>/.mcp.json` or `<cwd>/.claude.json` where `<cwd>` is a
-    /// project root, **not** `$HOME`). Project `<cwd>` is derived
-    /// from `path.parent()` by the reloader.
+    /// A project-scoped `<cwd>/.mcp.json` changed. Project `<cwd>` is
+    /// derived from `path.parent()` by the reloader.
     McpConfigChanged {
         path: PathBuf,
     },
-    /// The user's **home-level** `~/.claude.json` changed. Distinct
-    /// from [`Self::McpConfigChanged`] because `~/.claude.json` is
-    /// loaded for **every** session regardless of cwd (see
-    /// `load_claude_json_mcp_servers_as_configs`), so the reload
-    /// must broadcast through the legacy unit
-    /// [`super::reloader::ConfigUpdate::McpServersChanged`] arm —
-    /// routing it through `ProjectMcpServersChanged { cwd: $HOME }`
-    /// would silently skip sessions whose cwd doesn't sit under
-    /// `$HOME`.
-    HomeClaudeJsonChanged,
 }
 
 /// Watches `~/.grok/` for `auth.json`, `config.toml`, and `models_cache.json`
@@ -115,7 +103,7 @@ pub enum ConfigChangeEvent {
 /// processes (e.g. `grok login` in another terminal).
 ///
 /// Adds two **non-recursive** watches per `cwd` argument:
-/// `<cwd>/` (catches `.mcp.json` and `.claude.json` at the project root) and
+/// `<cwd>/` (catches `.mcp.json` at the project root) and
 /// `<cwd>/.grok/` (catches `<cwd>/.grok/config.toml`). Recursing on `<cwd>`
 /// would walk `node_modules/`, `target/`, `.git/`, etc. and blow through
 /// `fs.inotify.max_user_watches` on large repos. Use [`Self::watch_path`]
@@ -146,29 +134,13 @@ impl ConfigFileWatcher {
         cwd: Option<&Path>,
         debounce: Option<Duration>,
     ) -> Option<(Self, mpsc::UnboundedReceiver<ConfigChangeEvent>)> {
+        if !validate_config_watch_target(grok_home, "grok home directory") {
+            return None;
+        }
+
         let debounce = debounce.unwrap_or(DEFAULT_DEBOUNCE);
         let (tx, rx) = mpsc::unbounded_channel();
         let grok_home_buf = grok_home.to_path_buf();
-        // `~/.claude.json` is consumed by **every**
-        // session (see `load_claude_json_mcp_servers_as_configs`), so
-        // a write to it must broadcast through the unit
-        // `McpServersChanged` arm — NOT through the per-cwd
-        // `ProjectMcpServersChanged { cwd: $HOME }` arm, which
-        // `cwd_matches` would silently filter for sessions outside
-        // `$HOME`. We snapshot `$HOME` here so the closure can
-        // discriminate `<home>/.claude.json` from a project-level
-        // `<cwd>/.claude.json` purely by path.
-        //
-        // Canonicalize `$HOME` ONCE up front. `notify`
-        // backends may deliver canonicalized event paths (e.g. macOS
-        // FSEvents resolves symlinks, returning `/private/var/...`
-        // where `dirs::home_dir()` returned `/var/...`), so a raw byte
-        // compare against an un-canonicalized `$HOME` would mis-route
-        // `~/.claude.json` to the per-cwd path. The per-event side is
-        // canonicalized in `parent_is_dir`.
-        let user_home_buf: Option<PathBuf> =
-            dirs::home_dir().map(|h| dunce::canonicalize(&h).unwrap_or(h));
-
         let mut debouncer = new_filtered_debouncer(debounce, move |res: DebounceEventResult| {
             let Ok(events) = res else { return };
 
@@ -191,19 +163,7 @@ impl ConfigFileWatcher {
                     Some("config.toml") => {
                         Some(ConfigChangeEvent::ProjectConfigChanged { path: path.clone() })
                     }
-                    // `~/.claude.json` routes through
-                    // the dedicated home-level variant so the
-                    // reloader can broadcast. Project-level
-                    // `<cwd>/.claude.json` (and any `.mcp.json`)
-                    // continues to be a per-cwd reload.
-                    Some(".claude.json")
-                        if user_home_buf
-                            .as_deref()
-                            .is_some_and(|h| parent_is_dir(parent, h)) =>
-                    {
-                        Some(ConfigChangeEvent::HomeClaudeJsonChanged)
-                    }
-                    Some(".mcp.json") | Some(".claude.json") => {
+                    Some(".mcp.json") => {
                         Some(ConfigChangeEvent::McpConfigChanged { path: path.clone() })
                     }
                     _ => None,
@@ -236,6 +196,9 @@ impl ConfigFileWatcher {
 
         for p in extra_paths {
             if let Some(parent) = p.parent() {
+                if !validate_config_watch_target(parent, "extra config parent directory") {
+                    continue;
+                }
                 let _ = debouncer
                     .watcher()
                     .watch(parent, RecursiveMode::NonRecursive);
@@ -258,8 +221,9 @@ impl ConfigFileWatcher {
         // additions remain non-recursive, no event amplification.
         let mut watched_cwds = HashSet::new();
         if let Some(cwd) = cwd {
-            watch_cwd_dirs(&mut debouncer, cwd);
-            watched_cwds.insert(cwd.to_path_buf());
+            if watch_cwd_dirs(&mut debouncer, cwd) {
+                watched_cwds.insert(cwd.to_path_buf());
+            }
         }
 
         tracing::info!(
@@ -297,6 +261,9 @@ impl ConfigFileWatcher {
     /// error is logged and swallowed — the leader continues to rely on
     /// the user-triggered refresh as the fallback.
     pub fn watch_path(&mut self, cwd: &Path) {
+        if !validate_config_watch_target(cwd, "dynamic project cwd") {
+            return;
+        }
         // Idempotent at our layer: skip the redundant
         // `notify` watch-add when this cwd is already registered, so
         // re-opening sessions in the same directory doesn't churn the
@@ -305,8 +272,9 @@ impl ConfigFileWatcher {
         if self.watched_cwds.contains(cwd) {
             return;
         }
-        watch_cwd_dirs(&mut self.debouncer, cwd);
-        self.watched_cwds.insert(cwd.to_path_buf());
+        if watch_cwd_dirs(&mut self.debouncer, cwd) {
+            self.watched_cwds.insert(cwd.to_path_buf());
+        }
     }
 
     /// Remove the two non-recursive watches (`<cwd>/` and
@@ -321,6 +289,9 @@ impl ConfigFileWatcher {
     /// unwatch once the *last* session sharing this cwd closes —
     /// `ConfigFileWatcher` tracks distinct cwds, not session counts.
     pub fn unwatch_path(&mut self, cwd: &Path) {
+        if !validate_config_watch_target(cwd, "dynamic project cwd") {
+            return;
+        }
         if !self.watched_cwds.remove(cwd) {
             return;
         }
@@ -328,15 +299,19 @@ impl ConfigFileWatcher {
     }
 }
 
-/// Component-aware "is `parent` the directory `dir`?" that tolerates
-/// symlink / canonicalization differences between a `notify`-delivered
-/// event path and a `dirs::home_dir()`-style reference. `dir` is
-/// expected to be already canonicalized (see `ConfigFileWatcher::start`).
-fn parent_is_dir(parent: Option<&Path>, dir: &Path) -> bool {
-    let Some(parent) = parent else {
-        return false;
-    };
-    parent == dir || dunce::canonicalize(parent).is_ok_and(|p| p == dir)
+/// Reject Claude/Codex vendor state before a path reaches the OS watcher or
+/// the `watched_cwds` bookkeeping set. Validation canonicalizes existing
+/// ancestors, so symlink aliases into vendor state are rejected as well.
+fn validate_config_watch_target(path: &Path, target: &str) -> bool {
+    if xai_grok_config::validate_grok_path(path).is_some() {
+        return true;
+    }
+    tracing::warn!(
+        path = %path.display(),
+        watch_target = target,
+        "refusing config watch target under Claude/Codex vendor state"
+    );
+    false
 }
 
 /// Add the two non-recursive watches for a project root.
@@ -353,31 +328,40 @@ fn parent_is_dir(parent: Option<&Path>, dir: &Path) -> bool {
 /// surfaced as a watch-add trigger. Users hitting this case must hit
 /// the explicit refresh button. A robust fix (re-attempt on parent-
 /// directory create) is out of scope here.
-fn watch_cwd_dirs(debouncer: &mut Debouncer<AccessFilteredWatcher>, cwd: &Path) {
+fn watch_cwd_dirs(debouncer: &mut Debouncer<AccessFilteredWatcher>, cwd: &Path) -> bool {
+    if !validate_config_watch_target(cwd, "project cwd") {
+        return false;
+    }
     if let Err(e) = debouncer.watcher().watch(cwd, RecursiveMode::NonRecursive) {
         log_watch_error(&e, "failed to watch project cwd (non-recursive)");
     }
     let grok_dir = cwd.join(".grok");
-    if let Err(e) = debouncer
-        .watcher()
-        .watch(&grok_dir, RecursiveMode::NonRecursive)
+    if validate_config_watch_target(&grok_dir, "project .grok directory")
+        && let Err(e) = debouncer
+            .watcher()
+            .watch(&grok_dir, RecursiveMode::NonRecursive)
     {
         log_watch_error(
             &e,
             "failed to watch project .grok directory (non-recursive)",
         );
     }
+    true
 }
 
 /// Remove the two non-recursive watches added by [`watch_cwd_dirs`].
 /// Best-effort: a `WatchNotFound` (never watched / already removed) is
 /// expected and logged at `debug!`.
 fn unwatch_cwd_dirs(debouncer: &mut Debouncer<AccessFilteredWatcher>, cwd: &Path) {
-    if let Err(e) = debouncer.watcher().unwatch(cwd) {
+    if validate_config_watch_target(cwd, "project cwd")
+        && let Err(e) = debouncer.watcher().unwatch(cwd)
+    {
         tracing::debug!(error = %e, "failed to unwatch project cwd");
     }
     let grok_dir = cwd.join(".grok");
-    if let Err(e) = debouncer.watcher().unwatch(&grok_dir) {
+    if validate_config_watch_target(&grok_dir, "project .grok directory")
+        && let Err(e) = debouncer.watcher().unwatch(&grok_dir)
+    {
         tracing::debug!(error = %e, "failed to unwatch project .grok directory");
     }
 }
@@ -443,7 +427,7 @@ fn is_global_config_dir(dir: &Path, grok_home: &Path) -> bool {
 /// Vendor config dir names that sit directly under `$HOME` and carry large
 /// non-skill trees. Kept in sync with the home-level dirs added by
 /// `collect_skill_config_dirs`.
-const HOME_VENDOR_DIRS: &[&str] = &[".grok", ".agents", ".claude", ".cursor"];
+const HOME_VENDOR_DIRS: &[&str] = &[".grok", ".cursor"];
 
 /// Testable core of [`is_global_config_dir`] with `$HOME` injected.
 fn is_global_config_dir_impl(dir: &Path, grok_home: &Path, home: Option<&Path>) -> bool {
@@ -509,11 +493,8 @@ impl SkillsFileWatcher {
             .ok()?;
 
         let grok_home = xai_grok_tools::util::grok_home::grok_home();
-        // Watch the full superset of vendor dirs (all-on compat). This watcher
-        // is leader-global (no per-session compat resolved here); the actual
-        // per-session discovery gating happens downstream, so watching a
-        // currently-disabled vendor dir is harmless (a change just re-runs the
-        // gated discovery) and avoids ever missing a watch if a toggle flips.
+        // Use the canonical startup auto-discovery dirs. Build-disabled vendor
+        // roots are absent here, so they are never handed to the OS watcher.
         let dirs_to_watch = xai_grok_agent::prompt::skills::collect_skill_config_dirs(
             cwd,
             monorepo_user_dir,
@@ -578,9 +559,9 @@ mod tests {
 
         // grok_home and vendor dirs directly under $HOME: scoped (global).
         assert!(g(&grok_home));
-        assert!(g(&home.join(".claude")));
+        assert!(!g(&home.join(".claude")));
         assert!(g(&home.join(".cursor")));
-        assert!(g(&home.join(".agents")));
+        assert!(!g(&home.join(".agents")));
 
         // A user [skills].paths entry under $HOME: NOT global (stays recursive).
         assert!(!g(&home.join("my-skills")));
@@ -1060,5 +1041,59 @@ mod tests {
         assert!(!watcher.watched_cwds.contains(p));
         watcher.unwatch_path(p);
         assert!(!watcher.watched_cwds.contains(p));
+    }
+
+    #[test]
+    fn config_watcher_rejects_vendor_targets_and_keeps_ordinary_repos() {
+        let tmp = TempDir::new().unwrap();
+        let grok_home = tmp.path().join("grok-home");
+        let vendor_cwd = tmp.path().join(".codex").join("repo");
+        let ordinary_cwd = tmp.path().join(".codex-tools");
+        for dir in [&grok_home, &vendor_cwd, &ordinary_cwd] {
+            fs::create_dir_all(dir.join(".grok")).unwrap();
+        }
+
+        assert!(
+            ConfigFileWatcher::start(&vendor_cwd, &[], None, Some(Duration::from_millis(100)),)
+                .is_none(),
+            "vendor grok_home must be rejected before watcher registration"
+        );
+        assert!(!validate_config_watch_target(
+            &vendor_cwd,
+            "extra config parent directory"
+        ));
+        assert!(validate_config_watch_target(
+            &ordinary_cwd,
+            "extra config parent directory"
+        ));
+
+        let Some((mut watcher, _rx)) = ConfigFileWatcher::start(
+            &grok_home,
+            &[],
+            Some(&vendor_cwd),
+            Some(Duration::from_millis(100)),
+        ) else {
+            // OS watcher unavailable in this environment; the pure target
+            // assertions above still cover fail-closed path classification.
+            return;
+        };
+        assert!(
+            watcher.watched_cwds.is_empty(),
+            "startup vendor cwd must not reach bookkeeping"
+        );
+
+        watcher.watch_path(&vendor_cwd);
+        assert!(
+            watcher.watched_cwds.is_empty(),
+            "dynamic vendor cwd must not reach bookkeeping"
+        );
+
+        watcher.watch_path(&ordinary_cwd);
+        assert!(
+            watcher.watched_cwds.contains(&ordinary_cwd),
+            "a similarly named ordinary repo must remain watchable"
+        );
+        watcher.unwatch_path(&ordinary_cwd);
+        assert!(!watcher.watched_cwds.contains(&ordinary_cwd));
     }
 }

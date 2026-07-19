@@ -1,13 +1,8 @@
 //! Parse the CI-generated `plugin-index.json` component catalog.
 //!
-//! Directory precedence mirrors `index::load_index`:
-//! `.grok-plugin/plugin-index.json` (preferred), then
-//! `.claude-plugin/plugin-index.json` — but only one filename is probed per
-//! directory, and a present-but-unreadable/unparseable preferred catalog does
-//! not fall back to the other directory (never serve possibly-stale data when
-//! the authoritative file is broken). The catalog is presentation-layer
-//! enrichment only: failures degrade to `None` and never fail a marketplace
-//! listing.
+//! The catalog is loaded only from `.grok-plugin/plugin-index.json`. It is
+//! presentation-layer enrichment: failures degrade to `None` and never fail a
+//! marketplace listing.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -62,47 +57,38 @@ impl PluginCatalog {
 }
 
 /// Load `plugin-index.json` from a marketplace root, or `None` when absent,
-/// malformed, or of an unsupported version. A missing file falls through to
-/// the next candidate directory; a broken one does not (see module docs).
+/// malformed, or of an unsupported version.
 pub fn load_catalog(marketplace_root: &Path) -> Option<PluginCatalog> {
-    let candidates = [
-        marketplace_root
-            .join(".grok-plugin")
-            .join("plugin-index.json"),
-        marketplace_root
-            .join(".claude-plugin")
-            .join("plugin-index.json"),
-    ];
-    for path in &candidates {
-        let content = match std::fs::read_to_string(path) {
-            Ok(content) => content,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                tracing::warn!("failed to read {}: {e}", path.display());
-                return None;
-            }
-        };
-        let mut catalog: PluginCatalog = match serde_json::from_str(&content) {
-            Ok(catalog) => catalog,
-            Err(e) => {
-                tracing::warn!("failed to parse {}: {e}", path.display());
-                return None;
-            }
-        };
-        if catalog.version != SUPPORTED_VERSION {
-            tracing::warn!(
-                "unsupported plugin catalog version {} in {}",
-                catalog.version,
-                path.display()
-            );
+    let path = marketplace_root
+        .join(".grok-plugin")
+        .join("plugin-index.json");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::warn!("failed to read {}: {e}", path.display());
             return None;
         }
-        for entry in catalog.plugins.values_mut() {
-            entry.components.sanitize();
+    };
+    let mut catalog: PluginCatalog = match serde_json::from_str(&content) {
+        Ok(catalog) => catalog,
+        Err(e) => {
+            tracing::warn!("failed to parse {}: {e}", path.display());
+            return None;
         }
-        return Some(catalog);
+    };
+    if catalog.version != SUPPORTED_VERSION {
+        tracing::warn!(
+            "unsupported plugin catalog version {} in {}",
+            catalog.version,
+            path.display()
+        );
+        return None;
     }
-    None
+    for entry in catalog.plugins.values_mut() {
+        entry.components.sanitize();
+    }
+    Some(catalog)
 }
 
 #[cfg(test)]
@@ -149,14 +135,14 @@ mod tests {
     }
 
     #[test]
-    fn load_catalog_falls_back_to_claude_plugin_dir() {
+    fn load_catalog_ignores_claude_plugin_dir() {
         let dir = tempfile::tempdir().unwrap();
         write_catalog(dir.path(), ".claude-plugin", BASIC);
-        assert!(load_catalog(dir.path()).is_some());
+        assert!(load_catalog(dir.path()).is_none());
     }
 
     #[test]
-    fn load_catalog_prefers_grok_dir_over_claude_dir() {
+    fn load_catalog_uses_grok_dir_when_claude_dir_exists() {
         let dir = tempfile::tempdir().unwrap();
         write_catalog(dir.path(), ".grok-plugin", BASIC);
         write_catalog(
@@ -183,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn load_catalog_broken_preferred_does_not_fall_back() {
+    fn load_catalog_broken_grok_catalog_does_not_use_claude_catalog() {
         let dir = tempfile::tempdir().unwrap();
         write_catalog(dir.path(), ".grok-plugin", "not json");
         write_catalog(dir.path(), ".claude-plugin", BASIC);

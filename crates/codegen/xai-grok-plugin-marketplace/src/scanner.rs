@@ -254,10 +254,10 @@ mod tests {
     /// Create a minimal plugin directory with a manifest.
     fn make_plugin(dir: &Path, name: &str, version: &str) {
         let plugin_dir = dir.join("plugins").join(name);
-        let claude_dir = plugin_dir.join(".claude-plugin");
-        std::fs::create_dir_all(&claude_dir).unwrap();
+        let grok_dir = plugin_dir.join(".grok-plugin");
+        std::fs::create_dir_all(&grok_dir).unwrap();
         std::fs::write(
-            claude_dir.join("plugin.json"),
+            grok_dir.join("plugin.json"),
             format!(r#"{{"name":"{name}","version":"{version}","description":"Test {name}"}}"#),
         )
         .unwrap();
@@ -288,10 +288,10 @@ mod tests {
         make_plugin(dir.path(), "indexed-plugin", "1.0.0");
 
         // Create marketplace index.
-        let claude_dir = dir.path().join(".claude-plugin");
-        std::fs::create_dir_all(&claude_dir).unwrap();
+        let grok_dir = dir.path().join(".grok-plugin");
+        std::fs::create_dir_all(&grok_dir).unwrap();
         std::fs::write(
-            claude_dir.join("marketplace.json"),
+            grok_dir.join("marketplace.json"),
             r#"{
                 "name": "test-marketplace",
                 "plugins": [{
@@ -388,10 +388,10 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         make_plugin(outside.path(), "escaped-plugin", "1.0.0");
 
-        let claude_dir = dir.path().join(".claude-plugin");
-        std::fs::create_dir_all(&claude_dir).unwrap();
+        let grok_dir = dir.path().join(".grok-plugin");
+        std::fs::create_dir_all(&grok_dir).unwrap();
         std::fs::write(
-            claude_dir.join("marketplace.json"),
+            grok_dir.join("marketplace.json"),
             r#"{
                 "name": "test-marketplace",
                 "plugins": [{
@@ -418,10 +418,10 @@ mod tests {
         )
         .unwrap();
 
-        let claude_dir = dir.path().join(".claude-plugin");
-        std::fs::create_dir_all(&claude_dir).unwrap();
+        let grok_dir = dir.path().join(".grok-plugin");
+        std::fs::create_dir_all(&grok_dir).unwrap();
         std::fs::write(
-            claude_dir.join("marketplace.json"),
+            grok_dir.join("marketplace.json"),
             r#"{
                 "name": "test-marketplace",
                 "plugins": [{
@@ -471,9 +471,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         make_plugin(dir.path(), "fallback-plugin", "1.0.0");
 
-        let claude_dir = dir.path().join(".claude-plugin");
-        std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join("marketplace.json"), "not valid json").unwrap();
+        let grok_dir = dir.path().join(".grok-plugin");
+        std::fs::create_dir_all(&grok_dir).unwrap();
+        std::fs::write(grok_dir.join("marketplace.json"), "not valid json").unwrap();
 
         let plugins = scan_marketplace(dir.path()).entries;
         assert_eq!(plugins.len(), 1);

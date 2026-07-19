@@ -28,6 +28,9 @@ struct Candidate {
 }
 
 pub(super) fn scan(cwd: &Path, now: SystemTime) -> Vec<ForeignSessionSummary> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return Vec::new();
+    }
     let Some(config_dir) = std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".claude")))
@@ -42,6 +45,9 @@ pub(super) fn most_recent(
     now: SystemTime,
     within: Duration,
 ) -> RecentProbe<RecentCandidate> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return RecentProbe::Complete(None);
+    }
     let Some(config_dir) = std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|home| home.join(".claude")))

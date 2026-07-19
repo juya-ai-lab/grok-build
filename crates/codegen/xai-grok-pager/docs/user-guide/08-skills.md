@@ -21,18 +21,18 @@ Grok discovers skills from these directories, in priority order:
 | `./.grok/skills/`, `./.grok/commands/` | Local (CWD) | Highest | Current directory skills / legacy command markdown |
 | `<repo_root>/.grok/skills/`, `…/commands/` | Repo | Medium | Shared across the repo |
 | `~/.grok/skills/`, `~/.grok/commands/` | User | Lowest | Personal skills for all projects |
-| `~/.claude/skills/`, `~/.claude/commands/` | User | Lowest | Claude Code compatibility (configurable) |
-| `./.claude/skills/`, `./.claude/commands/` | Local / Repo | High | Project Claude skills and legacy custom slash commands |
 | `~/.cursor/skills/` | User | Lowest | Cursor compatibility (configurable) |
 | `./.cursor/skills/` | Local / Repo | High | Project Cursor skills (when cursor compat skills are enabled) |
 
-Grok deduplicates skills by name -- a higher-priority location overrides a lower one. Grok also scans `.agents/skills/` (and `commands/`) at each tier (alongside `.grok/`) and walks every directory between your working directory and the repo root.
+Grok deduplicates skills by name -- a higher-priority location overrides a lower one. It walks `.grok` and enabled `.cursor` locations at every directory between your working directory and the repo root. Claude Code and Codex's shared `.agents` roots are compile-time disabled and rejected even when reached through a symlink or a custom path.
 
 Flat `*.md` files under a `commands/` directory become user-invocable slash commands (filename stem = command name), matching Claude Code's legacy custom-command layout.
 
-Skill and command discovery does **not** use `.gitignore`. Paths under known skill roots (`.grok/`, `.agents/`, `.claude/`, `.cursor/`) always load when present on disk — teams often ignore `.claude/**` as local-only config while still expecting `/frontend`-style project commands to work. To hide a skill, use `[skills] ignore` in config (not repo ignore rules).
+Skill and command discovery does **not** use `.gitignore`. Enabled `.grok/` and `.cursor/` roots load when present on disk. To hide a skill, use `[skills] ignore` in config (not repo ignore rules).
 
-Grok scans the Claude and Cursor skill directories by default. To stop scanning a vendor, set its `skills` cell to `false` under `[compat.cursor]` or `[compat.claude]` in `~/.grok/config.toml`, or set the `GROK_CURSOR_SKILLS_ENABLED` or `GROK_CLAUDE_SKILLS_ENABLED` environment variable to `false`. See [Configuration](05-configuration.md#harness-compatibility) for details. Grok always filters out known vendor-shipped default skills (such as Cursor's `shell`, `canvas`, and `statusline`), regardless of these settings.
+Only Cursor skill compatibility remains configurable through `[compat.cursor]`
+or `GROK_CURSOR_SKILLS_ENABLED`. See
+[Configuration](05-configuration.md#harness-compatibility).
 
 ### Additional Skill Directories
 

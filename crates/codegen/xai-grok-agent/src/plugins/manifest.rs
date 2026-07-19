@@ -1,9 +1,7 @@
 //! Plugin manifest parsing and validation.
 //!
 //! The canonical manifest location is `plugin.json` at the plugin root.
-//! Fallback locations (checked in order when the root manifest is absent):
-//! 1. `.grok-plugin/plugin.json`
-//! 2. `.claude-plugin/plugin.json`
+//! When the root manifest is absent, `.grok-plugin/plugin.json` is checked.
 //!
 //! If no manifest is found at all, the plugin can still function via
 //! convention-based discovery (skills/, agents/, .mcp.json, hooks/hooks.json),
@@ -290,11 +288,7 @@ fn resolve_dirs(
 // ── Manifest loading ──────────────────────────────────────────────────
 
 /// Manifest search order within a plugin directory.
-const MANIFEST_PATHS: &[&str] = &[
-    "plugin.json",
-    ".grok-plugin/plugin.json",
-    ".claude-plugin/plugin.json",
-];
+const MANIFEST_PATHS: &[&str] = &["plugin.json", ".grok-plugin/plugin.json"];
 
 /// Result of attempting to load a manifest from a plugin directory.
 #[derive(Debug)]
@@ -313,7 +307,23 @@ pub enum ManifestLoadResult {
 pub fn load_manifest(plugin_root: &Path) -> Result<ManifestLoadResult, ManifestError> {
     for rel_path in MANIFEST_PATHS {
         let manifest_path = plugin_root.join(rel_path);
+        if xai_grok_config::validate_grok_path(&manifest_path).is_none() {
+            tracing::warn!(
+                path = %manifest_path.display(),
+                "plugin manifest resolves into Claude/Codex vendor state; skipping"
+            );
+            continue;
+        }
         if manifest_path.is_file() {
+            // Discovery and consumption are separate trust boundaries: the
+            // manifest may have been replaced with a symlink after is_file().
+            if xai_grok_config::validate_grok_path(&manifest_path).is_none() {
+                tracing::warn!(
+                    path = %manifest_path.display(),
+                    "plugin manifest changed to resolve into Claude/Codex vendor state; skipping"
+                );
+                continue;
+            }
             let content =
                 std::fs::read_to_string(&manifest_path).map_err(|e| ManifestError::IoError {
                     path: manifest_path.clone(),
@@ -395,6 +405,31 @@ pub enum ManifestError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(unix)]
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &Path) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[test]
     fn valid_plugin_names() {
@@ -583,6 +618,23 @@ mod tests {
     }
 
     #[test]
+    fn load_manifest_ignores_claude_plugin_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin_root = tmp.path().join("claude-only-plugin");
+        std::fs::create_dir_all(plugin_root.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            plugin_root.join(".claude-plugin/plugin.json"),
+            r#"{"name": "claude-only-plugin"}"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            load_manifest(&plugin_root).unwrap(),
+            ManifestLoadResult::NotFound
+        ));
+    }
+
+    #[test]
     fn load_manifest_root_wins_over_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         let plugin_root = tmp.path().join("priority-test");
@@ -602,6 +654,46 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn load_manifest_rejects_symlinks_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let custom_codex = tmp.path().join("custom-codex-state");
+        let custom_claude = tmp.path().join("custom-claude-state");
+        let _codex_home = EnvVarGuard::set("CODEX_HOME", &custom_codex);
+        let _claude_config = EnvVarGuard::set("CLAUDE_CONFIG_DIR", &custom_claude);
+
+        let vendor_targets = [
+            tmp.path().join(".codex/plugin.json"),
+            tmp.path().join(".agents/plugin.json"),
+            tmp.path().join(".claude/plugin.json"),
+            tmp.path().join(".claude.json"),
+            custom_codex.join("plugin.json"),
+            custom_claude.join("plugin.json"),
+        ];
+
+        for (index, target) in vendor_targets.iter().enumerate() {
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, r#"{"name":"vendor-manifest"}"#).unwrap();
+
+            let plugin_root = tmp.path().join(format!("ordinary-plugin-{index}"));
+            std::fs::create_dir_all(&plugin_root).unwrap();
+            symlink(target, plugin_root.join("plugin.json")).unwrap();
+
+            assert!(
+                matches!(
+                    load_manifest(&plugin_root).unwrap(),
+                    ManifestLoadResult::NotFound
+                ),
+                "manifest symlink target must be rejected: {}",
+                target.display()
+            );
+        }
+    }
+
     #[test]
     fn manifest_rejects_invalid_name() {
         let json = r#"{"name": "INVALID_NAME"}"#;
@@ -610,12 +702,12 @@ mod tests {
     }
 
     #[test]
-    fn substitute_env_vars_replaces_all() {
-        let input = "${GROK_PLUGIN_ROOT}/bin:${CLAUDE_PLUGIN_ROOT}/lib:${GROK_PLUGIN_DATA}/cache";
+    fn substitute_env_vars_replaces_only_grok_tokens() {
+        let input = "${GROK_PLUGIN_ROOT}/bin:${CLAUDE_PLUGIN_ROOT}/lib:${GROK_PLUGIN_DATA}/cache:${CLAUDE_PLUGIN_DATA}/compat";
         let result = substitute_env_vars(input, "/home/user/plugin", "/home/user/.data/plugin");
         assert_eq!(
             result,
-            "/home/user/plugin/bin:/home/user/plugin/lib:/home/user/.data/plugin/cache"
+            "/home/user/plugin/bin:${CLAUDE_PLUGIN_ROOT}/lib:/home/user/.data/plugin/cache:${CLAUDE_PLUGIN_DATA}/compat"
         );
     }
 

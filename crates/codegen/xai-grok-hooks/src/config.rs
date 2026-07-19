@@ -489,6 +489,20 @@ fn strip_reserved_env_keys(
             );
         }
     }
+    let disabled_vendor_keys = extra_env
+        .keys()
+        .filter(|key| crate::env_expand::is_disabled_vendor_env(key))
+        .cloned()
+        .collect::<Vec<_>>();
+    for key in disabled_vendor_keys {
+        extra_env.remove(&key);
+        tracing::warn!(
+            hook = %spec_name,
+            file = %file_path.display(),
+            key,
+            "hook env: ignoring build-disabled vendor compatibility variable"
+        );
+    }
 }
 
 #[cfg(test)]

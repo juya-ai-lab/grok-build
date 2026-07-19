@@ -271,7 +271,11 @@ impl MvpAgent {
         let (cli_agent_names, subagent_toggle) = {
             let cfg = self.cfg.borrow();
             (
-                cfg.cli_agents.iter().map(|d| d.name.clone()).collect(),
+                cfg.cli_agents
+                    .iter()
+                    .filter(|d| !xai_grok_agent::config::is_build_disabled_agent_name(&d.name))
+                    .map(|d| d.name.clone())
+                    .collect(),
                 cfg.subagent_toggle.clone(),
             )
         };

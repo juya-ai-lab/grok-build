@@ -5,13 +5,14 @@
 //! ".claude", ".cursor"]` (and `RULES_DIRS` / `AGENT_FILENAMES`) across ~6
 //! call sites in three crates. This module now owns the canonical cell registry
 //! used by runtime resolution and diagnostics (env var → config TOML → remote
-//! setting → default ON).
+//! setting → compiled default). Claude and Codex compatibility are
+//! build-disabled and cannot be re-enabled by runtime inputs.
 //!
 //! Two forms:
 //! - [`CompatConfigToml`] — raw, parsed from the `[compat]` TOML section. Each
 //!   cell is `Option<bool>` so `None` falls through to the resolution chain.
-//! - [`CompatConfig`] — resolved plain bools consumed at runtime. Every cell
-//!   defaults on.
+//! - [`CompatConfig`] — resolved plain bools consumed at runtime. Cursor cells
+//!   default on; every Claude and Codex cell is forced off.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +29,15 @@ impl CompatVendor {
             Self::Cursor => "cursor",
             Self::Claude => "claude",
             Self::Codex => "codex",
+        }
+    }
+
+    /// Whether this vendor's compatibility layer is enabled in this build.
+    pub const fn is_build_enabled(self) -> bool {
+        match self {
+            Self::Cursor => true,
+            Self::Claude => xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED,
+            Self::Codex => xai_grok_config::CODEX_COMPAT_ENABLED,
         }
     }
 }
@@ -113,12 +123,15 @@ impl CompatCell {
 
     /// Whether Grok currently implements this compatibility surface.
     ///
-    /// Codex non-session cells remain reserved in the registry so their config
-    /// shape is stable, but runtime discovery does not consume them.
+    /// Claude and Codex cells are build-disabled. Codex non-session cells remain
+    /// reserved in the registry so their config shape is stable.
     pub const fn is_runtime_supported(self) -> bool {
         match self.vendor {
-            CompatVendor::Cursor | CompatVendor::Claude => true,
-            CompatVendor::Codex => matches!(self.surface, CompatSurface::Sessions),
+            CompatVendor::Cursor => true,
+            CompatVendor::Claude => self.vendor.is_build_enabled(),
+            CompatVendor::Codex => {
+                self.vendor.is_build_enabled() && matches!(self.surface, CompatSurface::Sessions)
+            }
         }
     }
 }
@@ -236,7 +249,8 @@ pub const COMPAT_CELLS: [CompatCell; 18] = [
 
 /// Raw per-vendor compat cells parsed from `[compat.<vendor>]` TOML.
 ///
-/// Resolution order is env override, this value, remote flag, default ON.
+/// For build-enabled vendors, resolution order is env override, this value,
+/// remote flag, compiled default. Build-disabled vendors ignore these inputs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct VendorCompatToml {
     pub skills: Option<bool>,
@@ -293,6 +307,17 @@ pub struct VendorCompat {
 }
 
 impl VendorCompat {
+    const fn with_all(value: bool) -> Self {
+        Self {
+            skills: value,
+            rules: value,
+            agents: value,
+            mcps: value,
+            hooks: value,
+            sessions: value,
+        }
+    }
+
     fn value(&self, surface: CompatSurface) -> bool {
         match surface {
             CompatSurface::Skills => self.skills,
@@ -318,57 +343,63 @@ impl VendorCompat {
 
 impl Default for VendorCompat {
     fn default() -> Self {
-        Self {
-            skills: true,
-            rules: true,
-            agents: true,
-            mcps: true,
-            hooks: true,
-            sessions: true,
-        }
+        Self::with_all(true)
     }
 }
 
 /// Resolved `[compat]` configuration threaded into compatibility consumers.
 ///
-/// Every cell defaults on. Codex's non-session cells are reserved and are not
-/// consumed by discovery.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Claude and Codex cells are build-disabled. Cursor cells default on; Codex's
+/// non-session cells remain reserved in the registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompatConfig {
     pub cursor: VendorCompat,
     pub claude: VendorCompat,
     pub codex: VendorCompat,
 }
 
+impl Default for CompatConfig {
+    fn default() -> Self {
+        Self {
+            cursor: VendorCompat::default(),
+            claude: VendorCompat::with_all(xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED),
+            codex: VendorCompat::with_all(xai_grok_config::CODEX_COMPAT_ENABLED),
+        }
+    }
+}
+
 impl CompatConfig {
     pub fn value(&self, cell: CompatCell) -> bool {
         match cell.vendor() {
             CompatVendor::Cursor => self.cursor.value(cell.surface()),
-            CompatVendor::Claude => self.claude.value(cell.surface()),
-            CompatVendor::Codex => self.codex.value(cell.surface()),
+            CompatVendor::Claude => {
+                xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED && self.claude.value(cell.surface())
+            }
+            CompatVendor::Codex => {
+                xai_grok_config::CODEX_COMPAT_ENABLED && self.codex.value(cell.surface())
+            }
         }
     }
 
     pub fn set(&mut self, cell: CompatCell, value: bool) {
         match cell.vendor() {
             CompatVendor::Cursor => self.cursor.set(cell.surface(), value),
-            CompatVendor::Claude => self.claude.set(cell.surface(), value),
-            CompatVendor::Codex => self.codex.set(cell.surface(), value),
+            CompatVendor::Claude => self.claude.set(
+                cell.surface(),
+                value && xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED,
+            ),
+            CompatVendor::Codex => self.codex.set(
+                cell.surface(),
+                value && xai_grok_config::CODEX_COMPAT_ENABLED,
+            ),
         }
     }
 
     /// Config directories that may contain `skills/` subdirectories, in
-    /// priority order. `.grok` and `.agents` are always included; `.claude`
-    /// and `.cursor` are gated on their respective `skills` cell.
-    ///
-    /// Replaces the hard-coded `[".grok", ".agents", ".claude", ".cursor"]`
-    /// in `collect_skill_config_dirs`. When all cells are on, the returned
-    /// list is identical to the historical constant.
+    /// priority order. `.grok` is always included and `.cursor` is gated on
+    /// its `skills` cell. Claude and Codex shared paths are never recognized.
     pub fn skill_config_dirs(&self) -> Vec<&'static str> {
-        let mut dirs = vec![".grok", ".agents"];
-        if self.claude.skills {
-            dirs.push(".claude");
-        }
+        let mut dirs = vec![".grok"];
         if self.cursor.skills {
             dirs.push(".cursor");
         }
@@ -376,55 +407,26 @@ impl CompatConfig {
     }
 
     /// Subdirectories scanned for `*.md` rules files. `.grok/rules` is always
-    /// included; `.claude/rules` and `.cursor/rules` are gated on their
-    /// respective `rules` cell.
-    ///
-    /// Replaces the hard-coded `RULES_DIRS` constant. When all cells are on,
-    /// the returned list is identical.
+    /// included; `.cursor/rules` is gated on its `rules` cell. Claude paths are
+    /// never recognized.
     pub fn rules_dirs(&self) -> Vec<&'static str> {
         let mut dirs = vec![".grok/rules"];
-        if self.claude.rules {
-            dirs.push(".claude/rules");
-        }
         if self.cursor.rules {
             dirs.push(".cursor/rules");
         }
         dirs
     }
 
-    /// Filenames (and relative paths) recognized as project-instruction files.
-    /// The generic names are always included; the `.claude/`-prefixed entries
-    /// are gated on `claude.agents`.
-    ///
-    /// Replaces the hard-coded `AGENT_FILENAMES` constant. When `claude.agents`
-    /// is on, the returned list is identical (same order).
+    /// Filenames recognized as project-instruction files. Claude-specific root
+    /// names and `.claude/`-prefixed entries are never recognized.
     pub fn agent_filenames(&self) -> Vec<&'static str> {
-        let mut names = vec![
-            "Agents.md",
-            "Claude.md",
-            "CLAUDE.md",
-            "CLAUDE.local.md",
-            "AGENT.md",
-            "AGENTS.md",
-        ];
-        if self.claude.agents {
-            names.push(".claude/CLAUDE.md");
-            names.push(".claude/CLAUDE.local.md");
-        }
-        names
+        vec!["Agents.md", "AGENT.md", "AGENTS.md"]
     }
 
-    /// Home-level vendor directories scanned for AGENTS.md / rules files
-    /// (e.g. `~/.claude`, `~/.cursor`). `.claude` is gated on `claude.agents`
-    /// and `.cursor` on `cursor.agents`.
-    ///
-    /// Replaces the hard-coded `[".claude", ".cursor"]` home scan. When both
-    /// cells are on, the returned list is identical (same order).
+    /// Home-level vendor directories scanned for project instructions and
+    /// rules. Only `.cursor` is eligible; Claude paths are never recognized.
     pub fn agents_home_dirs(&self) -> Vec<&'static str> {
         let mut dirs = Vec::new();
-        if self.claude.agents {
-            dirs.push(".claude");
-        }
         if self.cursor.agents {
             dirs.push(".cursor");
         }
@@ -470,20 +472,23 @@ mod tests {
             ]
         );
 
+        assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
+        assert!(!xai_grok_config::CODEX_COMPAT_ENABLED);
         let defaults = CompatConfig::default();
         for cell in COMPAT_CELLS {
-            assert!(
+            assert_eq!(
                 defaults.value(cell),
+                cell.vendor() == CompatVendor::Cursor,
                 "{}.{}",
                 cell.vendor().as_str(),
                 cell.surface().as_str()
             );
         }
-        for vendor in [defaults.cursor, defaults.claude, defaults.codex] {
-            assert!(vendor.skills && vendor.rules && vendor.agents);
-            assert!(vendor.mcps && vendor.hooks);
-            assert!(vendor.sessions);
-        }
+        let vendor = defaults.cursor;
+        assert!(vendor.skills && vendor.rules && vendor.agents);
+        assert!(vendor.mcps && vendor.hooks && vendor.sessions);
+        assert_eq!(defaults.claude, VendorCompat::with_all(false));
+        assert_eq!(defaults.codex, VendorCompat::with_all(false));
 
         assert_eq!(
             COMPAT_CELLS
@@ -498,107 +503,95 @@ mod tests {
                 ("cursor", "mcps"),
                 ("cursor", "hooks"),
                 ("cursor", "sessions"),
-                ("claude", "skills"),
-                ("claude", "rules"),
-                ("claude", "agents"),
-                ("claude", "mcps"),
-                ("claude", "hooks"),
-                ("claude", "sessions"),
-                ("codex", "sessions"),
             ]
         );
     }
 
     #[test]
-    fn skill_config_dirs_all_on_matches_legacy_constant() {
-        // Historical constant was `[".grok", ".agents", ".claude", ".cursor"]`.
+    fn build_disabled_cells_cannot_be_enabled_through_resolved_config() {
+        let mut config = CompatConfig::default();
+        for cell in COMPAT_CELLS
+            .into_iter()
+            .filter(|cell| cell.vendor() != CompatVendor::Cursor)
+        {
+            config.set(cell, true);
+            assert!(
+                !config.value(cell),
+                "{}.{}",
+                cell.vendor().as_str(),
+                cell.surface().as_str()
+            );
+        }
+        assert_eq!(config.claude, VendorCompat::with_all(false));
+        assert_eq!(config.codex, VendorCompat::with_all(false));
+    }
+
+    #[test]
+    fn skill_config_dirs_exclude_build_disabled_vendors_and_keep_cursor() {
         assert_eq!(
             CompatConfig::default().skill_config_dirs(),
-            vec![".grok", ".agents", ".claude", ".cursor"]
+            vec![".grok", ".cursor"]
         );
     }
 
     #[test]
-    fn skill_config_dirs_gates_each_vendor() {
+    fn skill_config_dirs_gates_cursor() {
         let mut c = CompatConfig::default();
         c.cursor.skills = false;
-        assert_eq!(c.skill_config_dirs(), vec![".grok", ".agents", ".claude"]);
-
-        c.claude.skills = false;
-        assert_eq!(c.skill_config_dirs(), vec![".grok", ".agents"]);
-
-        // Only the `cursor` cell on (`claude` off): `cursor` still appended last.
-        let mut c2 = CompatConfig::default();
-        c2.claude.skills = false;
-        assert_eq!(c2.skill_config_dirs(), vec![".grok", ".agents", ".cursor"]);
+        assert_eq!(c.skill_config_dirs(), vec![".grok"]);
     }
 
     #[test]
-    fn rules_dirs_all_on_matches_legacy_constant() {
-        // Historical `RULES_DIRS` was `[".grok/rules", ".claude/rules", ".cursor/rules"]`.
+    fn rules_dirs_exclude_claude_and_keep_cursor() {
         assert_eq!(
             CompatConfig::default().rules_dirs(),
-            vec![".grok/rules", ".claude/rules", ".cursor/rules"]
+            vec![".grok/rules", ".cursor/rules"]
         );
     }
 
     #[test]
-    fn rules_dirs_gates_each_vendor() {
+    fn rules_dirs_gates_cursor() {
         let mut c = CompatConfig::default();
         c.cursor.rules = false;
-        assert_eq!(c.rules_dirs(), vec![".grok/rules", ".claude/rules"]);
-        c.claude.rules = false;
         assert_eq!(c.rules_dirs(), vec![".grok/rules"]);
     }
 
     #[test]
-    fn agent_filenames_all_on_matches_legacy_constant() {
-        // Historical `AGENT_FILENAMES`.
+    fn agent_filenames_exclude_all_claude_names() {
         assert_eq!(
             CompatConfig::default().agent_filenames(),
-            vec![
-                "Agents.md",
-                "Claude.md",
-                "CLAUDE.md",
-                "CLAUDE.local.md",
-                "AGENT.md",
-                "AGENTS.md",
-                ".claude/CLAUDE.md",
-                ".claude/CLAUDE.local.md",
-            ]
+            vec!["Agents.md", "AGENT.md", "AGENTS.md"]
         );
     }
 
     #[test]
-    fn agent_filenames_drops_claude_subdir_when_off() {
+    fn claude_fields_cannot_restore_discovery_paths() {
         let mut c = CompatConfig::default();
-        c.claude.agents = false;
+        c.claude = VendorCompat::with_all(true);
+        assert_eq!(c.skill_config_dirs(), vec![".grok", ".cursor"]);
+        assert_eq!(c.rules_dirs(), vec![".grok/rules", ".cursor/rules"]);
         assert_eq!(
             c.agent_filenames(),
-            vec![
-                "Agents.md",
-                "Claude.md",
-                "CLAUDE.md",
-                "CLAUDE.local.md",
-                "AGENT.md",
-                "AGENTS.md",
-            ]
+            vec!["Agents.md", "AGENT.md", "AGENTS.md"]
         );
+        assert_eq!(c.agents_home_dirs(), vec![".cursor"]);
     }
 
     #[test]
-    fn agents_home_dirs_all_on_matches_legacy_constant() {
-        // Historical home scan was `[".claude", ".cursor"]`.
-        assert_eq!(
-            CompatConfig::default().agents_home_dirs(),
-            vec![".claude", ".cursor"]
-        );
-    }
-
-    #[test]
-    fn agents_home_dirs_gates_each_vendor() {
+    fn codex_fields_cannot_restore_shared_skill_roots() {
         let mut c = CompatConfig::default();
-        c.claude.agents = false;
+        c.codex = VendorCompat::with_all(true);
+        assert_eq!(c.skill_config_dirs(), vec![".grok", ".cursor"]);
+        assert!(!c.skill_config_dirs().contains(&".agents"));
+        assert_eq!(
+            c.agent_filenames(),
+            vec!["Agents.md", "AGENT.md", "AGENTS.md"]
+        );
+    }
+
+    #[test]
+    fn agents_home_dirs_gates_cursor() {
+        let mut c = CompatConfig::default();
         assert_eq!(c.agents_home_dirs(), vec![".cursor"]);
         c.cursor.agents = false;
         assert!(c.agents_home_dirs().is_empty());

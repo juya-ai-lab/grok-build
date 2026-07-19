@@ -53,7 +53,7 @@ impl AppView {
     }
 
     pub(crate) fn begin_foreign_resume_detection(&mut self) -> Option<Effect> {
-        let compat = self.foreign_session_compat;
+        let compat = clamp_compat(self.foreign_session_compat);
         if self.foreign_resume_launch.is_some()
             || !(compat.claude || compat.codex || compat.cursor)
             || !self.pristine_foreign_resume_welcome()
@@ -119,8 +119,9 @@ impl AppView {
         if !matches_launch {
             return;
         }
-        let Some(hint) = hint.filter(|_| {
-            self.pristine_foreign_resume_welcome()
+        let Some(hint) = hint.filter(|hint| {
+            ForeignPickerSource::from_tool(hint.tool).is_some()
+                && self.pristine_foreign_resume_welcome()
                 && self
                     .foreign_resume_launch
                     .as_ref()
@@ -139,6 +140,7 @@ impl AppView {
             .as_ref()
             .filter(|launch| self.foreign_resume_context_matches(launch))
             .and_then(|launch| launch.hint.as_ref())
+            .filter(|hint| ForeignPickerSource::from_tool(hint.tool).is_some())
     }
 
     pub(crate) fn take_foreign_resume_hint(&mut self) -> Option<RecentForeignSession> {
@@ -148,7 +150,7 @@ impl AppView {
             .filter(|launch| self.foreign_resume_context_matches(launch))
             .and_then(|launch| launch.hint.clone())?;
         self.invalidate_foreign_resume_launch();
-        Some(hint)
+        ForeignPickerSource::from_tool(hint.tool).map(|_| hint)
     }
 
     pub(crate) fn reconcile_foreign_resume_launch(&mut self) {
@@ -229,34 +231,29 @@ impl ForeignScanCoordinator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ForeignPickerSource {
-    Claude,
-    Codex,
     Cursor,
 }
 
 impl ForeignPickerSource {
-    const ALL: [Self; 3] = [Self::Claude, Self::Codex, Self::Cursor];
+    // This is deliberately the effective, build-enabled set rather than every
+    // variant in `ForeignSessionTool`.
+    const ALL: [Self; 1] = [Self::Cursor];
 
-    pub(crate) fn from_tool(tool: ForeignSessionTool) -> Self {
+    pub(crate) fn from_tool(tool: ForeignSessionTool) -> Option<Self> {
         match tool {
-            ForeignSessionTool::Claude => Self::Claude,
-            ForeignSessionTool::Codex => Self::Codex,
-            ForeignSessionTool::Cursor => Self::Cursor,
+            ForeignSessionTool::Cursor => Some(Self::Cursor),
+            ForeignSessionTool::Claude | ForeignSessionTool::Codex => None,
         }
     }
 
     pub(crate) const fn tool(self) -> ForeignSessionTool {
         match self {
-            Self::Claude => ForeignSessionTool::Claude,
-            Self::Codex => ForeignSessionTool::Codex,
             Self::Cursor => ForeignSessionTool::Cursor,
         }
     }
 
     pub(crate) fn from_picker_source(source: &str) -> Option<Self> {
         match source {
-            "claude" => Some(Self::Claude),
-            "codex" => Some(Self::Codex),
             "cursor" => Some(Self::Cursor),
             _ => None,
         }
@@ -264,40 +261,24 @@ impl ForeignPickerSource {
 
     pub(crate) const fn picker_source(self) -> &'static str {
         match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
             Self::Cursor => "cursor",
-        }
-    }
-
-    pub(crate) const fn display_label(self) -> &'static str {
-        match self {
-            Self::Claude => "Claude Code",
-            Self::Codex => "Codex",
-            Self::Cursor => "Cursor",
         }
     }
 
     const fn skill_name(self) -> &'static str {
         match self {
-            Self::Claude => "resume-claude",
-            Self::Codex => "resume-codex",
             Self::Cursor => "resume-cursor",
         }
     }
 
     fn compat_enabled(self, compat: EnabledForeignSessionSources) -> bool {
         match self {
-            Self::Claude => compat.claude,
-            Self::Codex => compat.codex,
             Self::Cursor => compat.cursor,
         }
     }
 
     fn set_enabled(self, enabled: &mut EnabledForeignSessionSources) {
         match self {
-            Self::Claude => enabled.claude = true,
-            Self::Codex => enabled.codex = true,
             Self::Cursor => enabled.cursor = true,
         }
     }
@@ -319,8 +300,18 @@ impl ForeignPickerSource {
     }
 }
 
+fn clamp_compat(mut compat: EnabledForeignSessionSources) -> EnabledForeignSessionSources {
+    compat.claude &= xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED;
+    compat.codex &= xai_grok_config::CODEX_COMPAT_ENABLED;
+    compat
+}
+
 pub(crate) fn is_foreign_picker_source(source: &str) -> bool {
-    ForeignPickerSource::from_picker_source(source).is_some()
+    // Claude/Codex rows can survive in an old Grok-local picker cache.  Keep
+    // recognizing those wire tags solely to quarantine and delete them; the
+    // effective mapping below returns `None`, so they can neither be rendered
+    // as enabled sources nor routed into a resume prompt.
+    matches!(source, "claude" | "codex" | "cursor")
 }
 
 pub(crate) fn badge_for_picker_source(source: &str) -> &'static str {
@@ -334,7 +325,11 @@ pub(crate) fn badge_for_picker_source(source: &str) -> &'static str {
 }
 
 pub(crate) fn foreign_tool_display_label(tool: ForeignSessionTool) -> &'static str {
-    ForeignPickerSource::from_tool(tool).display_label()
+    match tool {
+        ForeignSessionTool::Claude => "Claude Code",
+        ForeignSessionTool::Codex => "Codex",
+        ForeignSessionTool::Cursor => "Cursor",
+    }
 }
 
 pub(crate) async fn gated_sources_async_with<F, Fut>(
@@ -346,6 +341,7 @@ where
     F: FnMut(PathBuf) -> Fut,
     Fut: Future<Output = bool>,
 {
+    let compat = clamp_compat(compat);
     let mut enabled = EnabledForeignSessionSources::default();
     for source in ForeignPickerSource::ALL {
         if !source.compat_enabled(compat) {
@@ -419,6 +415,7 @@ pub(crate) fn scan_effect(
     coordinator: ForeignScanCoordinator,
     seq: u64,
 ) -> Option<Effect> {
+    let compat = clamp_compat(compat);
     coordinator.begin_request(seq);
     (compat.claude || compat.codex || compat.cursor).then(|| Effect::ScanForeignSessions {
         cwd: cwd.to_path_buf(),
@@ -429,11 +426,11 @@ pub(crate) fn scan_effect(
     })
 }
 
-pub(crate) fn map_summary(summary: ForeignSessionSummary) -> SessionPickerEntry {
-    let source = ForeignPickerSource::from_tool(summary.tool);
+pub(crate) fn map_summary(summary: ForeignSessionSummary) -> Option<SessionPickerEntry> {
+    let source = ForeignPickerSource::from_tool(summary.tool)?;
     let updated_at = chrono::DateTime::<chrono::Utc>::from(summary.updated_at);
     let cwd = summary.cwd.to_string_lossy().into_owned();
-    SessionPickerEntry {
+    Some(SessionPickerEntry {
         id: summary.native_id,
         summary: summary.title,
         updated_at,
@@ -448,7 +445,7 @@ pub(crate) fn map_summary(summary: ForeignSessionSummary) -> SessionPickerEntry 
         repo_name: crate::views::session_picker::repo_name_from_cwd(&cwd),
         worktree_label: None,
         card_detail: None,
-    }
+    })
 }
 
 fn entry_recency(entry: &SessionPickerEntry) -> chrono::DateTime<chrono::Utc> {
@@ -479,7 +476,7 @@ pub(crate) fn replace_foreign_entries(
     entries: &mut Option<Vec<SessionPickerEntry>>,
     mut foreign: Vec<SessionPickerEntry>,
 ) {
-    foreign.retain(|entry| is_foreign_picker_source(&entry.source));
+    foreign.retain(|entry| ForeignPickerSource::from_picker_source(&entry.source).is_some());
     sort_picker_entries(&mut foreign);
     let mut seen = HashSet::new();
     foreign.retain(|entry| seen.insert((entry.source.clone(), entry.id.clone())));
@@ -502,7 +499,7 @@ pub(crate) fn replace_native_entries(
         .take()
         .unwrap_or_default()
         .into_iter()
-        .filter(|entry| is_foreign_picker_source(&entry.source))
+        .filter(|entry| ForeignPickerSource::from_picker_source(&entry.source).is_some())
         .collect();
     if foreign.is_empty() {
         *entries = (!native.is_empty()).then_some(native);
@@ -577,19 +574,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_gate_missing_skill_prevents_store_work() {
+    async fn async_gate_hard_disables_claude_and_codex_before_metadata() {
         let probed = RefCell::new(Vec::new());
         let store_calls = std::rc::Rc::new(std::cell::Cell::new(0));
         let store_calls_for_work = std::rc::Rc::clone(&store_calls);
         let result = with_gated_sources_async_with(
             EnabledForeignSessionSources {
+                claude: true,
                 codex: true,
                 ..Default::default()
             },
             Path::new("/grok"),
             |path| {
                 probed.borrow_mut().push(path.to_path_buf());
-                std::future::ready(false)
+                std::future::ready(true)
             },
             move |enabled| async move {
                 store_calls_for_work.set(store_calls_for_work.get() + 1);
@@ -598,13 +596,7 @@ mod tests {
         )
         .await;
         assert!(result.is_none());
-        let probed = probed.borrow();
-        assert_eq!(probed.len(), 2);
-        assert!(
-            probed
-                .iter()
-                .all(|path| path.to_string_lossy().contains("resume-codex"))
-        );
+        assert!(probed.borrow().is_empty());
         assert_eq!(store_calls.get(), 0);
     }
 
@@ -622,9 +614,8 @@ mod tests {
         assert_eq!(
             enabled,
             EnabledForeignSessionSources {
-                claude: true,
-                codex: true,
                 cursor: true,
+                ..Default::default()
             }
         );
     }
@@ -662,6 +653,18 @@ mod tests {
     }
 
     #[test]
+    fn launch_detection_ignores_disabled_vendor_compat_cells() {
+        let mut app = crate::app::app_view::tests::test_app();
+        app.foreign_session_compat = EnabledForeignSessionSources {
+            claude: true,
+            codex: true,
+            cursor: false,
+        };
+        assert!(app.begin_foreign_resume_detection().is_none());
+        assert!(app.foreign_resume_launch.is_none());
+    }
+
+    #[test]
     fn scan_effect_defers_skill_gate_to_background_lane() {
         let home = tempfile::tempdir().unwrap();
         let coordinator = ForeignScanCoordinator::default();
@@ -676,11 +679,7 @@ mod tests {
         assert!(matches!(
             effect,
             Effect::ScanForeignSessions {
-                compat: EnabledForeignSessionSources {
-                    claude: true,
-                    codex: true,
-                    cursor: true,
-                },
+                compat: EnabledForeignSessionSources { cursor: true, .. },
                 seq: 2,
                 ..
             }
@@ -692,6 +691,20 @@ mod tests {
                 home.path(),
                 ForeignScanCoordinator::default(),
                 3,
+            )
+            .is_none()
+        );
+        assert!(
+            scan_effect(
+                Path::new("/repo"),
+                EnabledForeignSessionSources {
+                    claude: true,
+                    codex: true,
+                    cursor: false,
+                },
+                home.path(),
+                ForeignScanCoordinator::default(),
+                4,
             )
             .is_none()
         );
@@ -774,59 +787,37 @@ mod tests {
 
     #[test]
     fn source_mapping_owns_badges_and_prompts() {
-        for (source, wire, prompt) in [
-            (
-                ForeignPickerSource::Claude,
-                "claude",
-                "/resume-claude native-id",
-            ),
-            (
-                ForeignPickerSource::Codex,
-                "codex",
-                "/resume-codex native-id",
-            ),
-            (
-                ForeignPickerSource::Cursor,
-                "cursor",
-                "/resume-cursor native-id",
-            ),
+        let source = ForeignPickerSource::Cursor;
+        assert_eq!(ForeignPickerSource::ALL, [source]);
+        assert_eq!(source.picker_source(), "cursor");
+        assert_eq!(
+            source.resume_prompt("native-id"),
+            "/resume-cursor native-id"
+        );
+        assert_eq!(
+            ForeignPickerSource::from_picker_source("cursor"),
+            Some(source)
+        );
+        assert_eq!(
+            ForeignPickerSource::from_tool(ForeignSessionTool::Cursor),
+            Some(source)
+        );
+        for (wire, tool) in [
+            ("claude", ForeignSessionTool::Claude),
+            ("codex", ForeignSessionTool::Codex),
         ] {
-            assert_eq!(source.picker_source(), wire);
-            assert_eq!(source.resume_prompt("native-id"), prompt);
-            assert_eq!(ForeignPickerSource::from_picker_source(wire), Some(source));
+            assert_eq!(ForeignPickerSource::from_picker_source(wire), None);
+            assert_eq!(ForeignPickerSource::from_tool(tool), None);
+            assert!(is_foreign_picker_source(wire));
+            assert_eq!(badge_for_picker_source(wire), "");
         }
         assert_eq!(badge_for_picker_source("conversation"), "chat");
         assert_eq!(badge_for_picker_source("local"), "");
     }
 
     #[test]
-    fn summary_mapping_collapses_cursor_and_codex_store_variants() {
+    fn summary_mapping_accepts_only_cursor_store_variants() {
         for (tool, store_source, picker_source) in [
-            (
-                ForeignSessionTool::Claude,
-                ForeignSessionSource::ClaudeCode,
-                "claude",
-            ),
-            (
-                ForeignSessionTool::Codex,
-                ForeignSessionSource::CodexCli,
-                "codex",
-            ),
-            (
-                ForeignSessionTool::Codex,
-                ForeignSessionSource::CodexVsCode,
-                "codex",
-            ),
-            (
-                ForeignSessionTool::Codex,
-                ForeignSessionSource::CodexAtlas,
-                "codex",
-            ),
-            (
-                ForeignSessionTool::Codex,
-                ForeignSessionSource::CodexChatGpt,
-                "codex",
-            ),
             (
                 ForeignSessionTool::Cursor,
                 ForeignSessionSource::CursorDesktop,
@@ -846,12 +837,30 @@ mod tests {
                 cwd: PathBuf::from("/work/repo"),
                 updated_at: UNIX_EPOCH + Duration::from_secs(42),
                 branch: Some("main".into()),
-            });
+            })
+            .expect("Cursor summary remains enabled");
             assert_eq!(entry.source, picker_source);
             assert_eq!(entry.id, "id");
             assert_eq!(entry.repo_name, "work-repo");
             assert_eq!(entry.branch.as_deref(), Some("main"));
             assert_eq!(entry.last_active_at, Some(entry.updated_at));
+        }
+        for (tool, source) in [
+            (ForeignSessionTool::Claude, ForeignSessionSource::ClaudeCode),
+            (ForeignSessionTool::Codex, ForeignSessionSource::CodexCli),
+        ] {
+            assert!(
+                map_summary(ForeignSessionSummary {
+                    tool,
+                    source,
+                    native_id: "blocked".into(),
+                    title: "blocked".into(),
+                    cwd: PathBuf::from("/work/repo"),
+                    updated_at: UNIX_EPOCH,
+                    branch: None,
+                })
+                .is_none()
+            );
         }
     }
 
@@ -875,13 +884,13 @@ mod tests {
         replace_foreign_entries(
             &mut entries,
             vec![
-                picker_entry("z", "codex", 1),
+                picker_entry("z", "cursor", 1),
                 picker_entry("b", "claude", 1),
-                picker_entry("a", "claude", 1),
+                picker_entry("a", "cursor", 1),
             ],
         );
 
         let ids: Vec<_> = entries.unwrap().into_iter().map(|entry| entry.id).collect();
-        assert_eq!(ids, ["native", "a", "b", "z"]);
+        assert_eq!(ids, ["native", "a", "z"]);
     }
 }

@@ -1980,6 +1980,9 @@ fn init_remote_sync(
     storage_mode: StorageMode,
     auth_manager: Option<Arc<crate::auth::AuthManager>>,
 ) -> io::Result<Option<RemoteSync>> {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+        return Ok(None);
+    }
     match storage_mode {
         StorageMode::Local => Ok(None),
         StorageMode::Writeback => {

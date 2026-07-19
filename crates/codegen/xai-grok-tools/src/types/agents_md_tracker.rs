@@ -16,26 +16,16 @@ use crate::types::compat::CompatConfig;
 /// Filenames (and relative paths) recognized as project instruction files.
 ///
 /// The runtime list is produced by `CompatConfig::agent_filenames()`; this
-/// constant is retained only as the all-on reference that the pinning test
-/// `compat_default_matches_legacy_constants` asserts parity against.
+/// constant is retained as the build-enabled reference used by tests.
 #[cfg(test)]
-pub(crate) const AGENT_FILENAMES: &[&str] = &[
-    "Agents.md",
-    "Claude.md",
-    "CLAUDE.md",
-    "CLAUDE.local.md",
-    "AGENT.md",
-    "AGENTS.md",
-    ".claude/CLAUDE.md",
-    ".claude/CLAUDE.local.md",
-];
+pub(crate) const AGENT_FILENAMES: &[&str] = &["Agents.md", "AGENT.md", "AGENTS.md"];
 
 /// Subdirectories to scan for `*.md` rules files.
 ///
 /// The runtime list is produced by `CompatConfig::rules_dirs()`; this constant
-/// is retained only as the all-on reference for the pinning test.
+/// is retained as the build-enabled reference for the pinning test.
 #[cfg(test)]
-pub(crate) const RULES_DIRS: &[&str] = &[".grok/rules", ".claude/rules", ".cursor/rules"];
+pub(crate) const RULES_DIRS: &[&str] = &[".grok/rules", ".cursor/rules"];
 
 /// Maximum number of parent directories to walk upward per call.
 ///
@@ -67,6 +57,28 @@ const MAX_WALK_DEPTH: usize = 10;
 /// is returned as-is — this is the same fallback used by `read_file`.
 async fn normalize(path: &Path) -> PathBuf {
     crate::util::fs::canonicalize_with_timeout(path.to_path_buf()).await
+}
+
+/// Run the central vendor-state guard on the blocking pool. Runtime discovery
+/// is async and must retain its filesystem timeout guarantees, while still
+/// rejecting symlink aliases before `metadata`/`read_dir` probes.
+async fn is_allowed_instruction_path(path: &Path) -> bool {
+    use crate::util::fs::FS_SYSCALL_TIMEOUT;
+
+    let owned = path.to_path_buf();
+    let checked = tokio::time::timeout(
+        FS_SYSCALL_TIMEOUT,
+        tokio::task::spawn_blocking(move || xai_grok_config::validate_grok_path(&owned).is_some()),
+    )
+    .await;
+    let allowed = matches!(checked, Ok(Ok(true)));
+    if !allowed {
+        tracing::warn!(
+            path = %path.display(),
+            "refusing runtime project instructions under Claude/Codex vendor state"
+        );
+    }
+    allowed
 }
 
 /// Tracks which AGENTS.md files have been discovered and reported to the agent
@@ -109,7 +121,7 @@ pub struct AgentsMdTracker {
     gitignore: Option<Gitignore>,
 
     /// Resolved vendor-compat config governing which rules dirs and agent
-    /// filenames are scanned. Defaults to all-on (historical behavior).
+    /// filenames are scanned. Build-disabled vendor paths are absent by default.
     /// Set by the bridge at seed time.
     compat: CompatConfig,
 }
@@ -148,6 +160,9 @@ impl AgentsMdTracker {
         gitignore: Option<Gitignore>,
     ) {
         for path in &initial_paths {
+            if !is_allowed_instruction_path(path).await {
+                continue;
+            }
             let canonical = normalize(path).await;
             self.initial_discovery.insert(canonical.clone());
             if let Some(parent) = canonical.parent() {
@@ -241,9 +256,8 @@ impl AgentsMdTracker {
         let mut discoveries = Vec::new();
 
         // Compute the gated filename / rules-dir lists once per call (they are
-        // constant across the walk). The vendor-gated entries drop when the
-        // matching compat cell is off; all-on reproduces `AGENT_FILENAMES` /
-        // `RULES_DIRS` exactly.
+        // constant across the walk). Build-disabled vendor entries are absent;
+        // Cursor entries remain gated by their compat cells.
         let agent_filenames = self.compat.agent_filenames();
         let rules_dirs = self.compat.rules_dirs();
 
@@ -275,6 +289,9 @@ impl AgentsMdTracker {
                 // `agent_filenames` is computed once above the walk.
                 for filename in &agent_filenames {
                     let agents_path = dir.join(filename);
+                    if !is_allowed_instruction_path(&agents_path).await {
+                        continue;
+                    }
                     let stat_result =
                         tokio::time::timeout(FS_SYSCALL_TIMEOUT, tokio::fs::metadata(&agents_path))
                             .await;
@@ -293,7 +310,8 @@ impl AgentsMdTracker {
                     if file_exists {
                         // Canonicalize the discovered path for consistent lookups
                         let canonical_agents = normalize(&agents_path).await;
-                        if !self.is_ignored(&canonical_agents)
+                        if is_allowed_instruction_path(&canonical_agents).await
+                            && !self.is_ignored(&canonical_agents)
                             && !self.initial_discovery.contains(&canonical_agents)
                             && !self.reminded.contains(&canonical_agents)
                         {
@@ -303,11 +321,13 @@ impl AgentsMdTracker {
                     }
                 }
 
-                // Check for rules files in .grok/rules/, .claude/rules/, and
-                // .cursor/rules/ subdirectories (vendor-compat paths).
+                // Check for rules files in .grok/rules/ and .cursor/rules/.
                 // `rules_dirs` is computed once above the walk.
                 for rules_subdir in &rules_dirs {
                     let rules_dir = dir.join(rules_subdir);
+                    if !is_allowed_instruction_path(&rules_dir).await {
+                        continue;
+                    }
                     let stat_result =
                         tokio::time::timeout(FS_SYSCALL_TIMEOUT, tokio::fs::metadata(&rules_dir))
                             .await;
@@ -361,8 +381,12 @@ impl AgentsMdTracker {
                     rule_paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
                     for rule_path in rule_paths {
+                        if !is_allowed_instruction_path(&rule_path).await {
+                            continue;
+                        }
                         let canonical = normalize(&rule_path).await;
-                        if !self.is_ignored(&canonical)
+                        if is_allowed_instruction_path(&canonical).await
+                            && !self.is_ignored(&canonical)
                             && !self.initial_discovery.contains(&canonical)
                             && !self.reminded.contains(&canonical)
                         {
@@ -809,7 +833,7 @@ mod tests {
     // ── Rules directory discovery tests ─────────────────────────────
 
     #[tokio::test]
-    async fn check_path_discovers_claude_rules_dir() {
+    async fn check_path_ignores_claude_rules_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let sub = root.join("sub");
@@ -826,11 +850,8 @@ mod tests {
 
         let results = tracker.check_path(&sub.join("foo.rs")).await;
         assert!(
-            results
-                .iter()
-                .any(|p| p.to_str().unwrap().contains("style.md")),
-            "Should discover .claude/rules/style.md, got: {:?}",
-            results
+            results.is_empty(),
+            "Claude rules must be ignored: {results:?}"
         );
     }
 
@@ -841,7 +862,7 @@ mod tests {
         let sub = root.join("sub");
         fs::create_dir_all(&sub).unwrap();
 
-        let rules_dir = sub.join(".claude").join("rules");
+        let rules_dir = sub.join(".cursor").join("rules");
         fs::create_dir_all(&rules_dir).unwrap();
         fs::write(rules_dir.join("style.md"), "# Style").unwrap();
 
@@ -860,7 +881,7 @@ mod tests {
     // ── AGENT_SUBDIRS discovery tests ───────────────────────────────
 
     #[tokio::test]
-    async fn check_path_discovers_claude_subdir_claude_md() {
+    async fn check_path_ignores_claude_subdir_claude_md() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let sub = root.join("sub");
@@ -877,19 +898,14 @@ mod tests {
 
         let results = tracker.check_path(&sub.join("foo.rs")).await;
         assert!(
-            results
-                .iter()
-                .any(|p| p.to_str().unwrap().contains("CLAUDE.md")),
-            "Should discover .claude/CLAUDE.md, got: {:?}",
-            results
+            results.is_empty(),
+            "Claude instructions must be ignored: {results:?}"
         );
     }
 
     // ── compat gating + byte-for-byte parity ───────────────
 
-    /// Pin that the all-on compat helpers reproduce the legacy constants
-    /// exactly (same entries, same order). If either drifts, the
-    /// byte-for-byte default-behavior invariant is broken.
+    /// Pin that compat helpers reproduce the build-enabled constants exactly.
     #[test]
     fn compat_default_matches_legacy_constants() {
         use crate::types::compat::CompatConfig;
@@ -927,7 +943,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn check_path_gates_claude_agents_when_off() {
+    async fn check_path_cannot_restore_claude_agents() {
         use crate::types::compat::CompatConfig;
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -939,7 +955,7 @@ mod tests {
         fs::write(claude_dir.join("CLAUDE.md"), "# Project instructions").unwrap();
 
         let mut compat = CompatConfig::default();
-        compat.claude.agents = false;
+        compat.claude.agents = true;
 
         let mut tracker = AgentsMdTracker::new();
         tracker.set_compat(compat);
@@ -954,6 +970,37 @@ mod tests {
                 .any(|p| p.to_str().unwrap().contains(".claude/CLAUDE.md")
                     || p.to_str().unwrap().contains(".claude\\CLAUDE.md")),
             "claude .claude/CLAUDE.md must be gated off: {results:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn check_path_rejects_instruction_symlinks_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let sub = root.join("sub");
+        let vendor_agents = root.join(".codex").join("AGENTS.md");
+        let vendor_rules = root.join(".claude").join("rules");
+        fs::create_dir_all(&sub).unwrap();
+        fs::create_dir_all(vendor_agents.parent().unwrap()).unwrap();
+        fs::create_dir_all(&vendor_rules).unwrap();
+        fs::write(&vendor_agents, "vendor instructions").unwrap();
+        fs::write(vendor_rules.join("hidden.md"), "vendor rule").unwrap();
+        symlink(&vendor_agents, sub.join("AGENTS.md")).unwrap();
+        fs::create_dir_all(sub.join(".grok")).unwrap();
+        symlink(&vendor_rules, sub.join(".grok").join("rules")).unwrap();
+
+        let mut tracker = AgentsMdTracker::new();
+        tracker
+            .seed(vec![], Some(root.to_path_buf()), vec![], None)
+            .await;
+
+        let results = tracker.check_path(&sub.join("foo.rs")).await;
+        assert!(
+            results.is_empty(),
+            "vendor aliases must stay hidden: {results:?}"
         );
     }
 }

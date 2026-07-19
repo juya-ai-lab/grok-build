@@ -57,9 +57,9 @@ fn foreign_result_interleaves_deduplicates_and_empty_clears_only_external() {
     let effects = dispatch(
         Action::TaskComplete(TaskResult::ForeignSessionsScanned {
             entries: vec![
-                at(make_foreign_entry("old", "claude", "/repo"), 10),
-                at(make_foreign_entry("new", "codex", "/repo"), 30),
-                at(make_foreign_entry("old", "claude", "/repo"), 10),
+                at(make_foreign_entry("old", "cursor", "/repo"), 10),
+                at(make_foreign_entry("new", "cursor", "/repo"), 30),
+                at(make_foreign_entry("old", "cursor", "/repo"), 10),
             ],
             seq: 4,
         }),
@@ -90,6 +90,29 @@ fn foreign_result_interleaves_deduplicates_and_empty_clears_only_external() {
 }
 
 #[test]
+fn foreign_result_drops_injected_disabled_vendor_rows() {
+    let mut app = test_app();
+    app.foreign_session_scan_seq = 5;
+    app.session_picker_lanes.foreign_loading = true;
+    app.session_picker_entries = Some(vec![make_picker_entry("native", "/repo")]);
+
+    let _ = dispatch(
+        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
+            entries: vec![
+                make_foreign_entry("claude-injected", "claude", "/repo"),
+                make_foreign_entry("codex-injected", "codex", "/repo"),
+            ],
+            seq: 5,
+        }),
+        &mut app,
+    );
+
+    let entries = app.session_picker_entries.as_ref().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id, "native");
+}
+
+#[test]
 fn foreign_generation_drops_stale_closed_and_pre_reopen_results() {
     let mut app = test_app();
     app.foreign_session_scan_seq = 7;
@@ -111,7 +134,7 @@ fn foreign_generation_drops_stale_closed_and_pre_reopen_results() {
     app.session_picker_lanes.foreign_loading = true;
     let _ = dispatch(
         Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("closed", "claude", "/repo")],
+            entries: vec![make_foreign_entry("closed", "cursor", "/repo")],
             seq: closed_seq,
         }),
         &mut app,
@@ -120,7 +143,7 @@ fn foreign_generation_drops_stale_closed_and_pre_reopen_results() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("reopened", "claude", "/repo")],
+            entries: vec![make_foreign_entry("reopened", "cursor", "/repo")],
             seq: reopened_seq,
         }),
         &mut app,
@@ -307,7 +330,7 @@ fn modal_native_failure_waits_for_foreign_rows_before_toast() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("foreign-only", "codex", "/repo")],
+            entries: vec![make_foreign_entry("foreign-only", "cursor", "/repo")],
             seq: 7,
         }),
         &mut app,
@@ -366,7 +389,7 @@ fn welcome_selection_survives_foreign_insertion_with_viewport_offset() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![at(make_foreign_entry("new", "codex", "/repo"), 30)],
+            entries: vec![at(make_foreign_entry("new", "cursor", "/repo"), 30)],
             seq: 8,
         }),
         &mut app,
@@ -846,16 +869,16 @@ fn gated_foreign_pick_replaces_all_prior_startup_intents() {
     app.deferred_startup.pending_chat = true;
     open_session_picker_with(
         &mut app,
-        vec![make_foreign_entry("codex-deferred", "codex", "/repo")],
+        vec![make_foreign_entry("cursor-deferred", "cursor", "/repo")],
     );
 
     assert!(dispatch(Action::PickSession(0), &mut app).is_empty());
     assert!(matches!(
         app.deferred_startup.session.as_ref(),
         Some(crate::app::session_startup::DeferredSessionStartup::ForeignResume {
-            tool: ForeignSessionTool::Codex,
+            tool: ForeignSessionTool::Cursor,
             native_id,
-        }) if native_id == "codex-deferred"
+        }) if native_id == "cursor-deferred"
     ));
     assert!(!app.deferred_startup.worktree);
     assert!(app.deferred_startup.worktree_label.is_none());
@@ -887,15 +910,40 @@ fn gated_foreign_pick_replaces_all_prior_startup_intents() {
             .pending_prompts
             .front()
             .map(|prompt| prompt.text.as_str()),
-        Some("/resume-codex codex-deferred")
+        Some("/resume-cursor cursor-deferred")
     );
+}
+
+#[test]
+fn disabled_vendor_picker_rows_and_deferred_resumes_are_rejected() {
+    for (wire, tool) in [
+        ("claude", ForeignSessionTool::Claude),
+        ("codex", ForeignSessionTool::Codex),
+    ] {
+        let mut injected = test_app();
+        injected.session_picker_entries = Some(vec![make_foreign_entry("blocked", wire, "/repo")]);
+        assert!(dispatch(Action::PickSession(0), &mut injected).is_empty());
+        assert!(injected.agents.is_empty());
+        assert!(injected.deferred_startup.is_empty());
+
+        let mut deferred = test_app();
+        deferred.deferred_startup.session = Some(
+            crate::app::session_startup::DeferredSessionStartup::ForeignResume {
+                tool,
+                native_id: "blocked".into(),
+            },
+        );
+        assert!(drain_startup_actions(&mut deferred).is_empty());
+        assert!(deferred.agents.is_empty());
+        assert!(deferred.deferred_startup.is_empty());
+    }
 }
 
 #[test]
 fn welcome_and_modal_foreign_picks_always_target_fresh_sessions() {
     let mut welcome = test_app();
     welcome.session_picker_entries =
-        Some(vec![make_foreign_entry("codex-native", "codex", "/repo")]);
+        Some(vec![make_foreign_entry("cursor-native", "cursor", "/repo")]);
     let effects = dispatch(Action::PickSession(0), &mut welcome);
     assert!(
         effects
@@ -908,7 +956,7 @@ fn welcome_and_modal_foreign_picks_always_target_fresh_sessions() {
             .pending_prompts
             .front()
             .map(|prompt| prompt.text.as_str()),
-        Some("/resume-codex codex-native")
+        Some("/resume-cursor cursor-native")
     );
 
     let mut modal = test_app_with_agent();

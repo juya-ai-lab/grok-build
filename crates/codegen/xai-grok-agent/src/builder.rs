@@ -15,12 +15,6 @@ use xai_grok_tools::computer::types::{AsyncFileSystem, TerminalBackend};
 use xai_grok_tools::notification::ToolNotificationHandle;
 use xai_grok_tools::registry::types::SessionContext;
 use xai_grok_tools::types::tool::ToolKind;
-/// The Grok [`ToolKind`] a vendor-compat `tools:` allowlist entry resolves to, so
-/// a plugin's upstream allowlist still binds. Backed by the shared vendor-to-Grok
-/// tool registry in `xai-grok-tools` (also used by the hook matcher).
-fn claude_tool_kind(name: &str) -> Option<ToolKind> {
-    xai_grok_tools::types::kind_for(name)
-}
 /// Builds an Agent from an AgentDefinition + session context.
 ///
 /// Two main flows:
@@ -879,10 +873,6 @@ impl AgentBuilder {
                 .any(|t| AGENT_TASK_CLASSIFIER_RE.is_match(t));
             let task_deps = ["task", "get_task_output", "kill_task", "wait_tasks"];
             let registered_tool_ids = tool_bridge_builder.known_tool_ids();
-            let present_kinds: std::collections::HashSet<ToolKind> =
-                tool_config.tools.iter().filter_map(|tc| tc.kind).collect();
-            let mut allow_kinds: std::collections::HashSet<ToolKind> =
-                std::collections::HashSet::new();
             let mut unresolved: Vec<&str> = Vec::new();
             let mut recognized_but_unavailable: Vec<&str> = Vec::new();
             for t in &definition.tools {
@@ -895,18 +885,10 @@ impl AgentBuilder {
                 if tool_config.tools.iter().any(|tc| tool_id_eq(t, &tc.id)) {
                     continue;
                 }
-                match claude_tool_kind(t) {
-                    Some(kind) => {
-                        if present_kinds.contains(&kind) {
-                            allow_kinds.insert(kind);
-                        } else {
-                            recognized_but_unavailable.push(t);
-                        }
-                    }
-                    None if registered_tool_ids.iter().any(|id| tool_id_eq(t, id)) => {
-                        recognized_but_unavailable.push(t);
-                    }
-                    None => unresolved.push(t),
+                if registered_tool_ids.iter().any(|id| tool_id_eq(t, id)) {
+                    recognized_but_unavailable.push(t);
+                } else {
+                    unresolved.push(t);
                 }
             }
             if !recognized_but_unavailable.is_empty() {
@@ -919,7 +901,6 @@ impl AgentBuilder {
             if unresolved.is_empty() {
                 tool_config.tools.retain(|tc| {
                     tool_id_matches(&definition.tools, &tc.id)
-                        || tc.kind.is_some_and(|k| allow_kinds.contains(&k))
                         || (has_agent_entry && task_deps.contains(&short_tool_name(&tc.id)))
                         || matches!(tc.kind, Some(ToolKind::SearchTool | ToolKind::UseTool))
                 });
@@ -1962,10 +1943,10 @@ mod tests {
             Some(vec!["worker".into()])
         );
     }
-    /// Compat allowlist names (`Read`, `Bash`, `Grep`) map to their Grok
-    /// equivalents by `ToolKind` — a real restricted toolset, not zero tools.
+    /// Claude Code allowlist names are not treated as Grok tool aliases. They
+    /// follow the same existing fallback as any other unknown allowlist entry.
     #[tokio::test]
-    async fn claude_tool_names_map_to_grok_equivalents() {
+    async fn claude_tool_names_are_not_mapped() {
         let tools = vec!["Read".into(), "Bash".into(), "Grep".into()];
         let agent = build_with_tools(tools, vec![]).await;
         let names: Vec<String> = agent
@@ -1974,43 +1955,28 @@ mod tests {
             .iter()
             .map(|d| d.function.name.clone())
             .collect();
-        assert!(
-            names.contains(&"read_file".to_string()),
-            "Read→read_file; got: {names:?}"
-        );
-        assert!(
-            names.contains(&"run_terminal_command".to_string()),
-            "Bash→run_terminal_command; got: {names:?}"
-        );
-        assert!(
-            names.contains(&"grep".to_string()),
-            "Grep→grep; got: {names:?}"
-        );
-        assert!(
-            !names.contains(&"search_replace".to_string()),
-            "Edit must be excluded by the allowlist; got: {names:?}"
-        );
-    }
-    /// Shell, LSP, ask, and task-lifecycle tool names resolve to their grok
-    /// `ToolKind`, so those allowlists are honored instead of failing open.
-    #[test]
-    fn shell_lsp_ask_and_task_tool_names_map() {
-        assert_eq!(claude_tool_kind("PowerShell"), Some(ToolKind::Execute));
-        assert_eq!(claude_tool_kind("LSP"), Some(ToolKind::Lsp));
-        assert_eq!(claude_tool_kind("AskUserQuestion"), Some(ToolKind::AskUser));
-        for name in ["TaskOutput", "BashOutputTool", "AgentOutputTool"] {
-            assert_eq!(claude_tool_kind(name), Some(ToolKind::BackgroundTaskAction));
+        for present in [
+            "read_file",
+            "run_terminal_command",
+            "grep",
+            "search_replace",
+        ] {
+            assert!(
+                names.contains(&present.to_string()),
+                "unknown Claude names must not become a restrictive Grok allowlist; got: {names:?}"
+            );
         }
-        assert_eq!(claude_tool_kind("TaskStop"), Some(ToolKind::KillTaskAction));
-        assert_eq!(claude_tool_kind("EnterPlanMode"), None);
-        assert_eq!(claude_tool_kind("ExitPlanMode"), None);
     }
-    /// `[Read, Edit, AskUserQuestion]` builds end-to-end: the allowlist is
+    /// A native Grok allowlist builds end-to-end: the allowlist is
     /// honored (no full-toolset fallback) and `ask_user_question` stands
     /// alone after the injected plan-mode tools are dropped.
     #[tokio::test]
     async fn ask_user_question_allowlist_builds_without_plan_tools() {
-        let tools = vec!["Read".into(), "Edit".into(), "AskUserQuestion".into()];
+        let tools = vec![
+            "read_file".into(),
+            "search_replace".into(),
+            "ask_user_question".into(),
+        ];
         let agent = build_with_tools(tools, vec![]).await;
         let names: Vec<String> = agent
             .tool_definitions()
@@ -2047,10 +2013,10 @@ mod tests {
             "got: {names:?}"
         );
     }
-    /// End-to-end: an on-disk plugin agent parsed via `from_file_frontmatter_only`
-    /// with a compat-style `tools:` allowlist gets the mapped toolset (not 0 tools).
+    /// An on-disk plugin agent does not gain Claude Code alias mapping merely by
+    /// coming from a plugin definition.
     #[tokio::test]
-    async fn plugin_style_agent_file_maps_claude_tools() {
+    async fn plugin_style_agent_file_does_not_map_claude_tools() {
         use xai_grok_tools::computer::local::LocalTerminalBackend;
         use xai_grok_tools::notification::ToolNotificationHandle;
         const MD: &str = "---\n\
@@ -2083,28 +2049,15 @@ mod tests {
             .map(|d| d.function.name.clone())
             .collect();
         assert!(
-            names.contains(&"read_file".to_string()),
-            "Read→read_file; got: {names:?}"
-        );
-        assert!(
-            names.contains(&"run_terminal_command".to_string()),
-            "Bash→run_terminal_command; got: {names:?}"
-        );
-        assert!(
-            names.contains(&"grep".to_string()),
-            "Grep→grep; got: {names:?}"
-        );
-        assert!(
-            !names.contains(&"search_replace".to_string()),
-            "Edit must be excluded; got: {names:?}"
+            names.contains(&"search_replace".to_string()),
+            "Claude names must remain unknown instead of forming a mapped allowlist; got: {names:?}"
         );
     }
-    /// A restrictive allowlist must never strip MCP access. Compat allowlists
-    /// treat `mcp__*` as always-on, so grok keeps the MCP meta-tools
+    /// A restrictive allowlist must never strip MCP access. Grok keeps the MCP meta-tools
     /// (`search_tool` / `use_tool`) regardless of what the allowlist names.
     #[tokio::test]
     async fn restrictive_allowlist_keeps_mcp_access() {
-        let agent = build_with_tools(vec!["Read".into()], vec![]).await;
+        let agent = build_with_tools(vec!["read_file".into()], vec![]).await;
         let names: Vec<String> = agent
             .tool_definitions()
             .await
@@ -2113,7 +2066,7 @@ mod tests {
             .collect();
         assert!(
             names.contains(&"read_file".to_string()),
-            "Read→read_file; got: {names:?}"
+            "read_file must be kept; got: {names:?}"
         );
         assert!(
             names.contains(&"search_tool".to_string()) && names.contains(&"use_tool".to_string()),
@@ -2196,12 +2149,10 @@ mod tests {
             assert!(!names.contains(&excluded.to_string()), "got: {names:?}");
         }
     }
-    /// grok-build toolsets have no Skill tool — skills are read from
-    /// `SKILL.md` via `read_file` — so a compat `Skill` allowlist entry grants
-    /// toolset.
+    /// A native read-only allowlist keeps `read_file` and the MCP meta-tools.
     #[tokio::test]
-    async fn skill_allowlist_maps_to_read() {
-        let agent = build_with_tools(vec!["Skill".into()], vec![]).await;
+    async fn native_read_allowlist_keeps_read() {
+        let agent = build_with_tools(vec!["read_file".into()], vec![]).await;
         let names: Vec<String> = agent
             .tool_definitions()
             .await
@@ -2210,7 +2161,7 @@ mod tests {
             .collect();
         assert!(
             names.contains(&"read_file".to_string()),
-            "Skill→read_file; got: {names:?}"
+            "read_file must be kept; got: {names:?}"
         );
         assert!(
             names.contains(&"search_tool".to_string()) && names.contains(&"use_tool".to_string()),
@@ -2222,12 +2173,10 @@ mod tests {
             "no full-toolset fallback — unlisted tools must be excluded; got: {names:?}"
         );
     }
-    /// `Read` and `Skill` both map to `ToolKind::Read`, but the allowlist phase
-    /// `read_file` (plus always-on MCP access) without falling back to the full
-    /// single base `read_file` entry is kept exactly once, never double-registered.
+    /// Duplicate native allowlist entries never double-register the base tool.
     #[tokio::test]
-    async fn read_and_skill_allowlist_keeps_single_read_file() {
-        let agent = build_with_tools(vec!["Read".into(), "Skill".into()], vec![]).await;
+    async fn duplicate_read_allowlist_keeps_single_read_file() {
+        let agent = build_with_tools(vec!["read_file".into(), "read_file".into()], vec![]).await;
         let names: Vec<String> = agent
             .tool_definitions()
             .await
@@ -2237,14 +2186,14 @@ mod tests {
         let read_file_count = names.iter().filter(|n| *n == "read_file").count();
         assert_eq!(
             read_file_count, 1,
-            "read_file must be registered exactly once for tools: [Read, Skill]; got: {names:?}"
+            "read_file must be registered exactly once; got: {names:?}"
         );
     }
     /// A compat-style `mcp__server__tool` allowlist entry is always allowed: it
     /// neither triggers the full-toolset fallback nor strips MCP access.
     #[tokio::test]
     async fn mcp_prefixed_allowlist_entry_keeps_mcp_access() {
-        let tools = vec!["mcp__github__create_issue".into(), "Read".into()];
+        let tools = vec!["mcp__github__create_issue".into(), "read_file".into()];
         let agent = build_with_tools(tools, vec![]).await;
         let names: Vec<String> = agent
             .tool_definitions()
@@ -2254,7 +2203,7 @@ mod tests {
             .collect();
         assert!(
             names.contains(&"read_file".to_string()),
-            "Read must be kept; got: {names:?}"
+            "read_file must be kept; got: {names:?}"
         );
         assert!(
             names.contains(&"search_tool".to_string()) && names.contains(&"use_tool".to_string()),
@@ -2266,12 +2215,11 @@ mod tests {
             "no full-toolset fallback — unlisted tools must be excluded; got: {names:?}"
         );
     }
-    /// Compat `ToolSearch` meta-tool maps to grok's `search_tool` (MCP
-    /// is a filter (`retain`) over a `HashSet` of kinds, not an inserter — so the
-    /// falling back to the full toolset.
+    /// The native `search_tool` name forms a restrictive allowlist while MCP
+    /// meta-tools remain available.
     #[tokio::test]
-    async fn tool_search_allowlist_maps_to_search_tool() {
-        let agent = build_with_tools(vec!["ToolSearch".into()], vec![]).await;
+    async fn search_tool_allowlist_keeps_search_tool() {
+        let agent = build_with_tools(vec!["search_tool".into()], vec![]).await;
         let names: Vec<String> = agent
             .tool_definitions()
             .await
@@ -2280,7 +2228,7 @@ mod tests {
             .collect();
         assert!(
             names.contains(&"search_tool".to_string()),
-            "ToolSearch→search_tool; got: {names:?}"
+            "search_tool must be kept; got: {names:?}"
         );
         assert!(
             !names.contains(&"search_replace".to_string()),

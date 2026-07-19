@@ -505,14 +505,14 @@ pub(in crate::app::dispatch) fn drain_startup_actions(app: &mut AppView) -> Vec<
             }
         }
         Some(DeferredSessionStartup::ForeignResume { tool, native_id }) => {
-            effects.extend(dispatch_new_session_inner(app, None));
-            effects.extend(dispatch(
-                Action::SendPrompt(
-                    crate::app::foreign_sessions::ForeignPickerSource::from_tool(tool)
-                        .resume_prompt(&native_id),
-                ),
-                app,
-            ));
+            if let Some(source) = crate::app::foreign_sessions::ForeignPickerSource::from_tool(tool)
+            {
+                effects.extend(dispatch_new_session_inner(app, None));
+                effects.extend(dispatch(
+                    Action::SendPrompt(source.resume_prompt(&native_id)),
+                    app,
+                ));
+            }
         }
         None => {
             if pending_chat {
@@ -790,10 +790,6 @@ pub(in crate::app::dispatch) fn skip_picker_and_create_session(
         model_id: None,
         preferred_session_id,
         chat_kind,
-        
-        
-        
-        
     }]
 }
 pub(in crate::app::dispatch) fn handle_session_created(

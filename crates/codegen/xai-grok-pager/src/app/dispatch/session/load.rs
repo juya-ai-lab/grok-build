@@ -288,9 +288,12 @@ pub(in crate::app::dispatch) fn dispatch_pick_session(
             d
         }
     };
-    if let Some(foreign_source) =
-        crate::app::foreign_sessions::ForeignPickerSource::from_picker_source(&source)
-    {
+    if crate::app::foreign_sessions::is_foreign_picker_source(&source) {
+        let Some(foreign_source) =
+            crate::app::foreign_sessions::ForeignPickerSource::from_picker_source(&source)
+        else {
+            return vec![];
+        };
         let prompt = foreign_source.resume_prompt(&session_id);
         clear_startup_actions(app);
         if !app.session_startup_allowed() {

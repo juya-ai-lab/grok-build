@@ -691,7 +691,7 @@ fn resolve_compaction_detail_from(
         .unwrap_or_default()
 }
 /// Resolve a single vendor-compat cell: env > `[compat]` TOML > remote settings
-/// remote flag > default ON.
+/// remote flag > caller-provided compiled default.
 fn resolve_compat_cell(
     env: &str,
     cfg: Option<bool>,
@@ -738,6 +738,10 @@ fn remote_compat_value(
     }
 }
 /// Resolve vendor compatibility cells from TOML and remote settings.
+///
+/// Claude and Codex compatibility are build-wide kill switches. Their cells
+/// bypass every runtime source so env, TOML, and remote settings cannot
+/// re-enable them.
 fn resolve_compat_config(
     config: &CompatConfigToml,
     remote: Option<&crate::util::config::RemoteSettings>,
@@ -745,6 +749,10 @@ fn resolve_compat_config(
     let defaults = CompatConfig::default();
     let mut resolved = defaults;
     for cell in COMPAT_CELLS {
+        if !cell.vendor().is_build_enabled() {
+            resolved.set(cell, false);
+            continue;
+        }
         resolved.set(
             cell,
             resolve_compat_cell(
@@ -893,6 +901,9 @@ impl PluginsConfig {
     /// Native `.grok/config.toml` entries already present take precedence:
     /// a name is only added if it isn't already in the opposite list.
     pub fn merge_claude_enabled_plugins(&mut self, _cwd: Option<&std::path::Path>) {
+        if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+            return;
+        }
         if crate::claude_import::is_claude_import_marked_with_log("merge_claude_enabled_plugins") {
             return;
         }
@@ -1232,16 +1243,14 @@ pub struct StorageConfig {
 }
 /// `[paths]` configuration: extra directories to scan for skills, rules, etc.
 ///
-/// These supplement the built-in scan locations (`.grok/skills/`,
-/// `.agents/skills/`, `~/.grok/skills/`). They're written by `/import-claude`
-/// to preserve previously-discovered Claude directories after the runtime
-/// `.claude/` cutoff (see `[claude_compat] imported`).
+/// These supplement the native Grok scan locations. Paths inside `.claude`,
+/// `.codex`, or `.agents` state are rejected by the discovery boundary.
 ///
 /// Example:
 /// ```toml
 /// [paths]
-/// extra_skill_dirs = ["~/.claude/skills", "/path/to/.claude/skills"]
-/// extra_rule_dirs = ["~/.claude/rules"]
+/// extra_skill_dirs = ["~/my-grok-skills", "/opt/team/grok-skills"]
+/// extra_rule_dirs = ["~/my-grok-rules"]
 /// ```
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -1525,10 +1534,9 @@ pub struct Config {
     /// for the idle-gated notification drain.
     #[serde(skip)]
     pub auto_wake_enabled: bool,
-    /// Resolved vendor-compat config (env → `[compat]` TOML → feature flag →
-    /// default ON), built from `compat` + `remote_settings` in
-    /// `resolve_runtime_fields`. Threaded into skills / rules / AGENTS.md
-    /// discovery.
+    /// Resolved vendor-compat config, built from `compat` + `remote_settings` in
+    /// `resolve_runtime_fields`. Build-disabled vendors ignore env, TOML, and
+    /// remote values. Threaded into skills / rules / AGENTS.md discovery.
     #[serde(skip)]
     pub compat_resolved: CompatConfig,
     /// Enforced requirement pins from `requirements.toml`.
@@ -2071,6 +2079,9 @@ impl Config {
         Resolved::new(TelemetryMode::Disabled, ConfigSource::Default)
     }
     pub(crate) fn resolve_trace_upload(&self) -> Resolved<bool> {
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            return Resolved::new(false, ConfigSource::Default);
+        }
         let mode = self.resolve_telemetry_mode();
         let ff = if mode.value.is_disabled() {
             None
@@ -4928,6 +4939,18 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use xai_grok_test_support::EnvGuard;
+
+    #[test]
+    #[serial]
+    fn content_upload_build_switch_does_not_disable_grok_oauth() {
+        let _oauth_env = EnvGuard::unset("GROK_OAUTH_ENABLED");
+        assert!(!xai_grok_config::CONTENT_UPLOADS_ENABLED);
+
+        let resolved = Config::default().resolve_grok_oauth(None);
+        assert!(resolved.value, "xAI/Grok OAuth must remain enabled");
+        assert_eq!(resolved.source, ConfigSource::Default);
+    }
+
     #[test]
     fn main_cli_tools_override_preserves_profile_injection_policy() {
         let overrides = CliAgentOverrides {
@@ -8125,23 +8148,20 @@ reasoning_effort = "low"
     }
     #[test]
     #[serial]
-    fn resolve_trace_upload_explicit_config_wins_over_telemetry_off() {
+    fn resolve_trace_upload_cannot_be_enabled_by_config_or_requirement() {
         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
         unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
         let mut cfg = Config::default();
         cfg.features.telemetry = Some(TelemetryMode::Disabled);
         cfg.telemetry.trace_upload = Some(true);
         let r = cfg.resolve_trace_upload();
-        assert!(
-            r.value,
-            "explicit trace_upload config wins over telemetry off"
-        );
-        assert_eq!(r.source, ConfigSource::Config);
+        assert!(!r.value);
+        assert_eq!(r.source, ConfigSource::Default);
         cfg.telemetry.trace_upload = None;
         cfg.requirements
             .trace_upload
             .pin(true, crate::config::RequirementSource::Unknown);
-        assert!(cfg.resolve_trace_upload().value);
+        assert!(!cfg.resolve_trace_upload().value);
     }
     #[test]
     #[serial]
@@ -8162,13 +8182,13 @@ reasoning_effort = "low"
         assert_eq!(d["has_remote_settings"], serde_json::json!(true));
         cfg.telemetry.trace_upload = Some(true);
         let d = cfg.trace_upload_decision_debug();
-        assert_eq!(d["trace_upload"], serde_json::json!(true));
-        assert_eq!(d["trace_upload_source"], serde_json::json!("config"));
+        assert_eq!(d["trace_upload"], serde_json::json!(false));
+        assert_eq!(d["trace_upload_source"], serde_json::json!("default"));
         assert_eq!(d["in_cfg_telemetry_trace_upload"], serde_json::json!(true));
     }
     #[test]
     #[serial]
-    fn resolve_trace_upload_honors_config_when_telemetry_on() {
+    fn resolve_trace_upload_stays_off_when_telemetry_on() {
         unsafe { std::env::remove_var("GROK_TELEMETRY_ENABLED") };
         unsafe { std::env::remove_var("GROK_TELEMETRY_TRACE_UPLOAD") };
         let mut cfg = Config::default();
@@ -8176,10 +8196,10 @@ reasoning_effort = "low"
         cfg.telemetry.trace_upload = Some(false);
         let r = cfg.resolve_trace_upload();
         assert!(!r.value);
-        assert_eq!(r.source, ConfigSource::Config);
+        assert_eq!(r.source, ConfigSource::Default);
         cfg.telemetry.trace_upload = None;
         let r = cfg.resolve_trace_upload();
-        assert!(r.value, "defaults on when telemetry fully enabled");
+        assert!(!r.value, "content uploads are build-disabled");
     }
     #[test]
     #[serial]
@@ -9865,11 +9885,24 @@ agent_type = "cursor"
             if cell.surface() == CompatSurface::Sessions {
                 assert_eq!(
                     config.value(cell),
-                    cell.vendor() != expected,
+                    cell.vendor() == CompatVendor::Cursor && cell.vendor() != expected,
                     "{}.sessions",
                     cell.vendor().as_str()
                 );
             }
+        }
+    }
+    fn assert_all_build_disabled_cells_off(config: CompatConfig) {
+        for cell in COMPAT_CELLS
+            .into_iter()
+            .filter(|cell| !cell.vendor().is_build_enabled())
+        {
+            assert!(
+                !config.value(cell),
+                "{}.{} must be build-disabled",
+                cell.vendor().as_str(),
+                cell.surface().as_str()
+            );
         }
     }
     fn remote_settings_with(
@@ -9906,6 +9939,69 @@ agent_type = "cursor"
             resolve_compat_config(&CompatConfigToml::default(), None),
             CompatConfig::default()
         );
+        assert_all_build_disabled_cells_off(CompatConfig::default());
+    }
+    #[test]
+    fn merge_claude_enabled_plugins_is_build_disabled() {
+        assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
+        let mut plugins = PluginsConfig {
+            enabled: vec!["native-enabled".to_string()],
+            disabled: vec!["native-disabled".to_string()],
+            ..Default::default()
+        };
+        plugins.merge_claude_enabled_plugins(None);
+        assert_eq!(plugins.enabled, ["native-enabled"]);
+        assert_eq!(plugins.disabled, ["native-disabled"]);
+    }
+    #[test]
+    #[serial]
+    fn build_disabled_compat_cannot_be_enabled_by_any_runtime_source() {
+        let _env = isolate_compat_env();
+        assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
+        assert!(!xai_grok_config::CODEX_COMPAT_ENABLED);
+
+        let config = parse_compat(
+            r#"[compat.claude]
+skills = true
+rules = true
+agents = true
+mcps = true
+hooks = true
+sessions = true
+[compat.codex]
+skills = true
+rules = true
+agents = true
+mcps = true
+hooks = true
+sessions = true"#,
+        );
+        assert_all_build_disabled_cells_off(resolve_compat_config(&config, None));
+
+        let remote = crate::util::config::RemoteSettings {
+            claude_skills_enabled: Some(true),
+            claude_rules_enabled: Some(true),
+            claude_agents_enabled: Some(true),
+            claude_mcps_enabled: Some(true),
+            claude_hooks_enabled: Some(true),
+            claude_sessions_enabled: Some(true),
+            codex_sessions_enabled: Some(true),
+            ..Default::default()
+        };
+        assert_all_build_disabled_cells_off(resolve_compat_config(
+            &CompatConfigToml::default(),
+            Some(&remote),
+        ));
+
+        let _foreign_env = COMPAT_CELLS
+            .into_iter()
+            .filter(|cell| !cell.vendor().is_build_enabled())
+            .map(|cell| EnvGuard::set(cell.env_var(), "true"))
+            .collect::<Vec<_>>();
+        assert_all_build_disabled_cells_off(resolve_compat_config(
+            &CompatConfigToml::default(),
+            None,
+        ));
     }
     #[test]
     #[serial]
@@ -9938,7 +10034,7 @@ hooks = "unrelated malformed field"
         let resolved = resolve_compat_sessions_from_raw(Ok(&raw), None);
         assert!(!resolved.cursor.sessions);
         assert!(!resolved.claude.sessions);
-        assert!(resolved.codex.sessions);
+        assert!(!resolved.codex.sessions);
     }
     #[test]
     #[serial]
@@ -9960,7 +10056,7 @@ sessions = true
         };
         let resolved = resolve_compat_sessions_from_raw(Ok(&raw), Some(&remote));
         assert!(!resolved.cursor.sessions);
-        assert!(resolved.claude.sessions);
+        assert!(!resolved.claude.sessions);
         assert!(!resolved.codex.sessions);
     }
     #[test]
@@ -10013,13 +10109,13 @@ hooks = true
     }
     #[test]
     #[serial]
-    fn resolve_raw_compat_sessions_load_failure_allows_env_override() {
+    fn resolve_raw_compat_sessions_load_failure_rejects_codex_env_override() {
         let _env = isolate_compat_env();
         let _codex = EnvGuard::set("GROK_CODEX_SESSIONS_ENABLED", "true");
         let resolved = resolve_compat_sessions_from_raw(Err(()), None);
         assert!(!resolved.cursor.sessions);
         assert!(!resolved.claude.sessions);
-        assert!(resolved.codex.sessions);
+        assert!(!resolved.codex.sessions);
     }
     #[test]
     #[serial]
@@ -10033,7 +10129,7 @@ hooks = true
         let resolved = resolve_compat_sessions_from_raw(Ok(&raw), Some(&remote));
         assert!(resolved.cursor.sessions);
         assert!(!resolved.claude.sessions);
-        assert!(resolved.codex.sessions);
+        assert!(!resolved.codex.sessions);
     }
     #[test]
     #[serial]
@@ -10092,12 +10188,12 @@ hooks = true
         assert!(!resolved.cursor.sessions);
         assert!(!resolved.codex.hooks);
         assert!(resolved.cursor.hooks);
-        assert!(resolved.claude.hooks);
+        assert!(!resolved.claude.hooks);
         let _session = EnvGuard::set("GROK_CURSOR_SESSIONS_ENABLED", "true");
         let _hook = EnvGuard::set("GROK_CODEX_HOOKS_ENABLED", "true");
         let resolved = resolve_compat_config(&config, Some(&remote));
         assert!(resolved.cursor.sessions);
-        assert!(resolved.codex.hooks);
+        assert!(!resolved.codex.hooks);
     }
     #[test]
     #[serial]

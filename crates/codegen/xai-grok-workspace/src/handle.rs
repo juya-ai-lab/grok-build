@@ -482,13 +482,22 @@ impl WorkspaceHandle {
         config: WorkspaceConfig,
         workspace_home: std::path::PathBuf,
         upload_queue: Option<Arc<xai_file_utils::queue::UploadQueue>>,
-        _upload_queue_enabled: bool,
+        upload_queue_enabled: bool,
         data_collection_disabled: bool,
         events_enabled: bool,
         workspace_rewind_all_outcomes: bool,
         tool_defs_enabled: bool,
         identity: crate::upload::environment::WorkspaceIdentity,
     ) -> WorkspaceResult<Self> {
+        // Unit tests exercise the generic queue machinery in isolation.  The
+        // shipped library/binary path has cfg!(test) == false and therefore
+        // cannot retain an injected queue while the build-wide switch is off.
+        let uploads_allowed = xai_grok_config::CONTENT_UPLOADS_ENABLED || cfg!(test);
+        let upload_queue = (uploads_allowed && upload_queue_enabled)
+            .then_some(upload_queue)
+            .flatten();
+        let data_collection_disabled = data_collection_disabled || !uploads_allowed;
+        let tool_defs_enabled = tool_defs_enabled && uploads_allowed;
         let sessions = std::collections::HashMap::new();
         let local_registry = xai_computer_hub_sdk::LocalRegistry::new();
         let capacity = if config.event_buffer_capacity == 0 {
@@ -3816,6 +3825,22 @@ pub async fn connect_local_workspace(
             .ignore
             .extend(bundled_allowlist_ignore_dirs(&dir, allowlist.as_deref()));
         ws_config.skills_config.bundled_skill_dirs = vec![dir];
+    }
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+        let ws_handle = WorkspaceHandle::build(
+            ws_config,
+            workspace_home,
+            None,
+            false,
+            true,
+            events_enabled(),
+            rewind_all_outcomes_from_env(),
+            false,
+            identity,
+        )
+        .map_err(|e| WorkspaceError::HubError(format!("failed to create workspace: {e}")))?;
+        ws_handle.connect_hub().await?;
+        return Ok(ws_handle);
     }
     let proxy_storage = Arc::new(crate::upload::ProxyStorageConfig::new(
         auth.clone(),

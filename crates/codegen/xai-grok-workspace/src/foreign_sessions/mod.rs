@@ -8,7 +8,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 mod capability;
+// Parsers for disabled vendor stores remain available only to their focused
+// unit tests.  Production builds do not compile either scanner, so no runtime
+// configuration or future call-site mistake can revive access to those stores.
+#[cfg(test)]
 mod claude;
+#[cfg(test)]
 mod codex;
 use capability::{ApprovedRoot, open_sqlite_transaction};
 pub const MAX_SESSIONS_PER_TOOL: usize = 50;
@@ -89,24 +94,32 @@ pub struct EnabledForeignSessionSources {
 }
 pub fn scan_foreign_sessions(
     cwd: &Path,
-    enabled: EnabledForeignSessionSources,
+    mut enabled: EnabledForeignSessionSources,
 ) -> Vec<ForeignSessionSummary> {
+    enabled.claude = false;
+    enabled.codex = false;
+    let scan_claude = |_: &Path, _: SystemTime| Vec::new();
+    let scan_codex = |_: &Path, _: SystemTime| Vec::new();
     let scan_cursor = |_: &Path, _: SystemTime| Vec::new();
-    scan_with(cwd, enabled, claude::scan, codex::scan, scan_cursor)
+    scan_with(cwd, enabled, scan_claude, scan_codex, scan_cursor)
 }
 pub fn most_recent_foreign_session(
     cwd: &Path,
-    enabled: EnabledForeignSessionSources,
+    mut enabled: EnabledForeignSessionSources,
     within: Duration,
 ) -> Option<RecentForeignSession> {
+    enabled.claude = false;
+    enabled.codex = false;
+    let recent_claude = |_: &Path, _: SystemTime, _: Duration| RecentProbe::Complete(None);
+    let recent_codex = |_: &Path, _: SystemTime, _: Duration| RecentProbe::Complete(None);
     let recent_cursor = |_: &Path, _: SystemTime, _: Duration| RecentProbe::Complete(None);
     match most_recent_with(
         cwd,
         enabled,
         within,
         SystemTime::now(),
-        claude::most_recent,
-        codex::most_recent,
+        recent_claude,
+        recent_codex,
         recent_cursor,
     ) {
         RecentProbe::Complete(session) => session,
@@ -304,6 +317,24 @@ pub(super) fn normalize_title(value: &str) -> Option<String> {
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn public_scan_cannot_reenable_build_disabled_vendor_sessions() {
+        assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
+        assert!(!xai_grok_config::CODEX_COMPAT_ENABLED);
+        let cwd = tempfile::tempdir().unwrap();
+        let requested = EnabledForeignSessionSources {
+            claude: true,
+            codex: true,
+            cursor: false,
+        };
+
+        assert!(scan_foreign_sessions(cwd.path(), requested).is_empty());
+        assert!(
+            most_recent_foreign_session(cwd.path(), requested, Duration::from_secs(600)).is_none()
+        );
+    }
+
     fn summary(id: &str, updated_at: SystemTime) -> ForeignSessionSummary {
         ForeignSessionSummary {
             tool: ForeignSessionTool::Claude,

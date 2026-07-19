@@ -136,11 +136,8 @@ fn count_skills_from(skills: &[SkillInfo], dir: &std::path::Path) -> usize {
     skills.iter().filter(|s| s.path.starts_with(prefix)).count()
 }
 
-/// Resolve a skill path to an absolute path.
-///
-/// Handles `~` expansion and relative path resolution against `cwd`.
-/// Falls back to the original string if canonicalization fails.
-fn resolve_skill_path(raw: &str, cwd: &str) -> String {
+/// Expand a skill path and anchor it to `cwd` without touching the filesystem.
+fn lexical_skill_path(raw: &str, cwd: &str) -> std::path::PathBuf {
     use std::path::PathBuf;
 
     // Expand ~ to $HOME
@@ -158,20 +155,39 @@ fn resolve_skill_path(raw: &str, cwd: &str) -> String {
         PathBuf::from(raw)
     };
 
-    // If already absolute, canonicalize to resolve `..` etc.
-    // If relative, join with cwd first.
-    let absolute = if expanded.is_absolute() {
+    // Keep absolute inputs; anchor relative ones to cwd without normalization.
+    if expanded.is_absolute() {
         expanded
     } else {
         PathBuf::from(cwd).join(&expanded)
-    };
+    }
+}
 
+fn canonicalize_skill_path(path: std::path::PathBuf) -> std::path::PathBuf {
     // canonicalize resolves symlinks and `..` — fall back to the joined path if it fails
     // (e.g. path doesn't exist yet)
-    dunce::canonicalize(&absolute)
-        .unwrap_or(absolute)
-        .to_string_lossy()
-        .to_string()
+    dunce::canonicalize(&path).unwrap_or(path)
+}
+
+/// Validate an add/remove path in two phases: a pure lexical hard deny before
+/// any stat/canonicalization, then the central canonical/symlink-aware guard.
+fn resolve_validated_skill_mutation_path(raw: &str, cwd: &str) -> anyhow::Result<String> {
+    let lexical = lexical_skill_path(raw, cwd);
+    if xai_grok_config::validate_grok_path_lexically(&lexical).is_none() {
+        anyhow::bail!(
+            "refusing skill path under Claude/Codex vendor state: {}",
+            lexical.display()
+        );
+    }
+
+    let resolved = canonicalize_skill_path(lexical);
+    if xai_grok_config::validate_grok_path(&resolved).is_none() {
+        anyhow::bail!(
+            "refusing skill path under Claude/Codex vendor state: {}",
+            resolved.display()
+        );
+    }
+    Ok(resolved.to_string_lossy().into_owned())
 }
 
 /// Collect auto-discovered skill source directories and their counts.
@@ -182,15 +198,9 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
         .ok()
         .and_then(|repo| repo.workdir().map(|p| p.to_path_buf()));
 
-    // Once the user has imported, stop scanning hardcoded
-    // .claude/skills/ paths. Equivalent locations should be opted in via
-    // [paths] extra_skill_dirs in config.toml (written by /import-claude).
-    let imported = crate::claude_import::is_claude_import_marked();
-    let local_dir_names: &[&str] = if imported {
-        &[".grok", ".agents"]
-    } else {
-        &[".grok", ".agents", ".claude"]
-    };
+    // Vendor roots are build-disabled and cannot be restored through explicit
+    // configured paths either.
+    let local_dir_names: &[&str] = &[".grok"];
 
     let mut sources: Vec<(String, usize)> = Vec::new();
     let subdirs = ["skills", "commands"];
@@ -225,25 +235,12 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
         try_add_source(grok_home.join(subdir), None);
     }
 
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-    if let Some(ref h) = home {
-        let home_path = std::path::PathBuf::from(h);
-        for subdir in &subdirs {
-            try_add_source(home_path.join(".agents").join(subdir), None);
-        }
-        if !imported {
-            for subdir in &subdirs {
-                try_add_source(home_path.join(".claude").join(subdir), None);
-            }
-        }
-    }
-
-    // [paths] extra_skill_dirs from config.toml. These supplement the built-in
-    // scan locations. Used both standalone and as the migration target after
-    // /import-claude when the runtime .claude/skills/ scan is disabled.
+    // [paths] extra_skill_dirs from config.toml supplement the built-in scan
+    // locations, but can never point back into Claude/Codex-owned state.
     for dir in extra_skill_dirs_from_config() {
         let path = crate::claude_import::expand_home(&dir);
-        if path.is_dir()
+        if xai_grok_config::validate_grok_path(&path).is_some()
+            && path.is_dir()
             && !sources
                 .iter()
                 .any(|(s, _)| s.as_str() == path.to_string_lossy().as_ref())
@@ -258,8 +255,8 @@ fn discover_auto_sources(cwd: &str, skills: &[SkillInfo]) -> Vec<(String, usize)
     sources
 }
 
-/// Read `[paths] extra_skill_dirs` from the effective config. Returns empty
-/// on any read/parse failure so misconfiguration never breaks listing.
+/// Read `[paths] extra_skill_dirs` from the effective config. Returns empty on
+/// any read/parse failure; vendor-state paths are rejected before filesystem IO.
 fn extra_skill_dirs_from_config() -> Vec<String> {
     let Ok(root) = crate::config::load_effective_config() else {
         return Vec::new();
@@ -286,8 +283,12 @@ pub async fn handle(
             let req: SkillsAddRequest = serde_json::from_str(args.params.get())?;
             let cwd = req.cwd.as_deref().unwrap_or(".");
 
-            // Resolve to absolute path so config entries work from any cwd.
-            let resolved = resolve_skill_path(&req.path, cwd);
+            // Reject literal vendor paths before any filesystem access, then
+            // canonicalize and reject symlink aliases before reading config.
+            let resolved = match resolve_validated_skill_mutation_path(&req.path, cwd) {
+                Ok(path) => path,
+                Err(err) => return super::to_ext_response(Err::<SkillsAddResponse, _>(err)),
+            };
 
             let p = resolved.clone();
             if let Err(e) = cli_config::update_config(|cfg| {
@@ -344,8 +345,12 @@ pub async fn handle(
             let req: SkillsRemoveRequest = serde_json::from_str(args.params.get())?;
             let cwd = req.cwd.as_deref().unwrap_or(".");
 
-            // Resolve so relative/tilde paths match what was saved by add.
-            let resolved = resolve_skill_path(&req.path, cwd);
+            // Apply the same no-compatibility validation as add. Rejected paths
+            // never reach config loading or persistence.
+            let resolved = match resolve_validated_skill_mutation_path(&req.path, cwd) {
+                Ok(path) => path,
+                Err(err) => return super::to_ext_response(Err::<SkillsRemoveResponse, _>(err)),
+            };
 
             let p = resolved.clone();
             if let Err(e) = cli_config::update_config(|cfg| {
@@ -523,6 +528,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn auto_sources_do_not_display_build_disabled_vendor_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path();
+        let grok_skills = cwd.join(".grok").join("skills");
+        let agents_skills = cwd.join(".agents").join("skills");
+        let claude_skills = cwd.join(".claude").join("skills");
+        std::fs::create_dir_all(&grok_skills).unwrap();
+        std::fs::create_dir_all(&agents_skills).unwrap();
+        std::fs::create_dir_all(&claude_skills).unwrap();
+
+        let skills = vec![
+            SkillInfo {
+                name: "grok-live".into(),
+                path: grok_skills
+                    .join("grok-live/SKILL.md")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..SkillInfo::default()
+            },
+            SkillInfo {
+                name: "codex-hidden".into(),
+                path: agents_skills
+                    .join("codex-hidden/SKILL.md")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..SkillInfo::default()
+            },
+            SkillInfo {
+                name: "claude-hidden".into(),
+                path: claude_skills
+                    .join("claude-hidden/SKILL.md")
+                    .to_string_lossy()
+                    .into_owned(),
+                ..SkillInfo::default()
+            },
+        ];
+
+        let sources = discover_auto_sources(&cwd.to_string_lossy(), &skills);
+        assert!(
+            sources
+                .iter()
+                .any(|(path, _)| path.contains("/.grok/skills")),
+            ".grok source must remain visible: {sources:?}"
+        );
+        assert!(
+            sources.iter().all(|(path, _)| !path.contains("/.agents/")),
+            ".agents sources must not be displayed: {sources:?}"
+        );
+        assert!(
+            sources.iter().all(|(path, _)| !path.contains("/.claude/")),
+            ".claude sources must not be displayed: {sources:?}"
+        );
+    }
+
+    #[test]
     fn test_add_request_with_cwd() {
         let json = r#"{"path": "/home/user/skills", "cwd": "/project"}"#;
         let req: SkillsAddRequest = serde_json::from_str(json).unwrap();
@@ -570,7 +630,8 @@ mod tests {
 
     #[test]
     fn test_resolve_absolute_path_unchanged() {
-        let resolved = resolve_skill_path("/absolute/path/to/skills", "/some/cwd");
+        let resolved =
+            resolve_validated_skill_mutation_path("/absolute/path/to/skills", "/some/cwd").unwrap();
         // Canonicalize will fail (path doesn't exist), so we get the joined absolute path
         assert_eq!(resolved, "/absolute/path/to/skills");
     }
@@ -581,7 +642,8 @@ mod tests {
         let sub = tmp.path().join("sub");
         std::fs::create_dir(&sub).unwrap();
 
-        let resolved = resolve_skill_path("sub", &tmp.path().to_string_lossy());
+        let resolved =
+            resolve_validated_skill_mutation_path("sub", &tmp.path().to_string_lossy()).unwrap();
         assert_eq!(
             resolved,
             dunce::canonicalize(&sub).unwrap().to_string_lossy()
@@ -594,11 +656,67 @@ mod tests {
         let cwd = tmp.path().join("a").join("b");
         std::fs::create_dir_all(&cwd).unwrap();
 
-        let resolved = resolve_skill_path("../..", &cwd.to_string_lossy());
+        let resolved =
+            resolve_validated_skill_mutation_path("../..", &cwd.to_string_lossy()).unwrap();
         assert_eq!(
             resolved,
             dunce::canonicalize(tmp.path()).unwrap().to_string_lossy()
         );
+    }
+
+    #[test]
+    fn skill_mutation_paths_reject_vendor_state_and_allow_near_misses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path();
+
+        for raw in [
+            ".claude/skills",
+            ".codex/skills",
+            ".agents/skills",
+            ".claude.json",
+            "safe/../.agents/skills",
+        ] {
+            assert!(
+                resolve_validated_skill_mutation_path(raw, &cwd.to_string_lossy()).is_err(),
+                "{raw}"
+            );
+        }
+
+        for raw in ["normal-skills", ".claude.json.bak", "my.claude.json"] {
+            let resolved =
+                resolve_validated_skill_mutation_path(raw, &cwd.to_string_lossy()).unwrap();
+            assert_eq!(std::path::PathBuf::from(resolved), cwd.join(raw), "{raw}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_mutation_paths_reject_vendor_symlink_aliases_after_canonicalization() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_dir = tmp.path().join(".agents").join("skills");
+        let vendor_file = tmp.path().join(".claude.json");
+        let dir_alias = tmp.path().join("apparently-safe-skills");
+        let file_alias = tmp.path().join("apparently-safe.json");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        std::fs::write(&vendor_file, "{}").unwrap();
+        std::os::unix::fs::symlink(&vendor_dir, &dir_alias).unwrap();
+        std::os::unix::fs::symlink(&vendor_file, &file_alias).unwrap();
+
+        for alias in [dir_alias, file_alias] {
+            assert!(
+                xai_grok_config::validate_grok_path_lexically(&alias).is_some(),
+                "safe-looking aliases must reach the canonical phase"
+            );
+            assert!(
+                resolve_validated_skill_mutation_path(
+                    &alias.to_string_lossy(),
+                    &tmp.path().to_string_lossy(),
+                )
+                .is_err(),
+                "{}",
+                alias.display()
+            );
+        }
     }
 
     /// Hermetic tilde expansion: pin HOME to a temp dir so remote sandboxes
@@ -617,7 +735,7 @@ mod tests {
             std::env::set_var("HOME", &home);
             std::env::remove_var("USERPROFILE");
         }
-        let resolved = resolve_skill_path("~/my-skills", "/ignored");
+        let resolved = resolve_validated_skill_mutation_path("~/my-skills", "/ignored").unwrap();
         match prev_home {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },

@@ -1395,9 +1395,6 @@ pub async fn run_leader(
             watch_paths.extend(crate::util::config::mcp_json_candidate_paths(
                 &cwd_for_watcher,
             ));
-            if let Some(home) = dirs::home_dir() {
-                watch_paths.push(home.join(".claude.json"));
-            }
             let auth_scope = agent_config.grok_com_config.auth_scope();
             // Gated on user_grok_home() so a cwd-relative .grok/auth.json is never
             // read as the user auth store when no home resolves.

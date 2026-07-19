@@ -224,7 +224,7 @@ fn find_project_grok_configs(cwd: &Path) -> Vec<PathBuf> {
         let mut current = Some(cwd.to_path_buf());
         while let Some(dir) = current {
             let p = dir.join(".grok").join("config.toml");
-            if p.is_file() {
+            if xai_grok_config::validate_grok_path(&p).is_some() && p.is_file() {
                 configs.push(p);
             }
             if dir == *root {
@@ -235,7 +235,7 @@ fn find_project_grok_configs(cwd: &Path) -> Vec<PathBuf> {
         configs.reverse();
     } else {
         let p = cwd.join(".grok").join("config.toml");
-        if p.is_file() {
+        if xai_grok_config::validate_grok_path(&p).is_some() && p.is_file() {
             configs.push(p);
         }
     }
@@ -257,6 +257,7 @@ fn load_config_toml_permissions(cwd: &Path) -> Vec<Sourced<PermissionRule>> {
     // Gated on user_grok_home() so a project's .grok/config.toml is never read as
     // global permissions when neither GROK_HOME nor a home dir resolves.
     if let Some(global_path) = xai_grok_config::user_grok_home().map(|g| g.join("config.toml"))
+        && xai_grok_config::validate_grok_path(&global_path).is_some()
         && global_path.is_file()
     {
         match xai_grok_config::load_config_file(&global_path) {
@@ -1395,6 +1396,10 @@ fn normalize_git_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn load_claude_settings(path: &Path) -> Option<ClaudeSettings> {
+        crate::permission::claude_settings::load_claude_settings_for_test(path)
+    }
 
     // Crate-shared lock serializing tests that mutate the global process
     // environment so concurrent test threads can't race on shared env state.

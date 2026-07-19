@@ -1,5 +1,19 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
+
+#[test]
+fn content_upload_build_switch_forces_local_storage() {
+    assert!(!xai_grok_config::CONTENT_UPLOADS_ENABLED);
+    let remote = crate::util::config::RemoteSettings {
+        writeback_enabled: Some(true),
+        ..Default::default()
+    };
+    assert_eq!(
+        StorageMode::resolve(Some("writeback"), Some(&remote)),
+        StorageMode::Local
+    );
+}
+
 fn with_env_var<T>(name: &str, value: &str, f: impl FnOnce() -> T) -> T {
     let previous = std::env::var(name).ok();
     unsafe {
@@ -2187,6 +2201,35 @@ fn discover_roles_skips_missing_directory() {
     let mut cfg: SubagentsConfig = toml::from_str("").unwrap();
     cfg.discover_roles(tmp.path());
     assert!(cfg.roles.is_empty());
+}
+#[cfg(unix)]
+#[test]
+fn subagent_resource_discovery_rejects_literal_and_symlinked_vendor_dirs() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let vendor_roles = tmp.path().join(".claude").join("roles");
+    let vendor_personas = tmp.path().join(".agents").join("personas");
+    let grok = tmp.path().join(".grok");
+    std::fs::create_dir_all(&vendor_roles).unwrap();
+    std::fs::create_dir_all(&vendor_personas).unwrap();
+    std::fs::create_dir_all(&grok).unwrap();
+    std::fs::write(vendor_roles.join("hidden.toml"), "description = \"hidden\"").unwrap();
+    std::fs::write(
+        vendor_personas.join("hidden.toml"),
+        "instructions = \"hidden\"",
+    )
+    .unwrap();
+    symlink(&vendor_roles, grok.join("roles")).unwrap();
+    symlink(&vendor_personas, grok.join("personas")).unwrap();
+
+    let mut cfg: SubagentsConfig = toml::from_str("").unwrap();
+    cfg.discover_roles(tmp.path());
+    cfg.discover_personas(tmp.path());
+    cfg.discover_roles_in_dir(&vendor_roles);
+    cfg.discover_personas_in_dir(&vendor_personas);
+    assert!(cfg.roles.is_empty());
+    assert!(cfg.personas.is_empty());
 }
 #[test]
 fn personas_parse_from_toml() {

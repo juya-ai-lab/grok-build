@@ -20,6 +20,21 @@ fn parse_enum_from_str<T: DeserializeOwned>(s: &str) -> Option<T> {
     serde_json::from_value::<T>(serde_json::Value::String(s.to_string())).ok()
 }
 
+/// Read a role/persona resource only when it remains outside foreign
+/// Claude/Codex state after lexical and symlink resolution.
+fn read_subagent_resource(path: &Path) -> std::io::Result<String> {
+    if xai_grok_config::validate_grok_path(path).is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing subagent resource under Claude/Codex vendor state: {}",
+                path.display()
+            ),
+        ));
+    }
+    std::fs::read_to_string(path)
+}
+
 /// Resolve effective runtime config from explicit overrides, role defaults,
 /// and persona defaults.
 ///
@@ -101,7 +116,7 @@ pub fn resolve_effective_overrides(
     let role_prompt = role.and_then(|r| {
         let file_path = r.prompt_file.as_deref()?;
         let base_dir = r.source_dir.as_deref().or(cwd)?;
-        match std::fs::read_to_string(base_dir.join(file_path)) {
+        match read_subagent_resource(&base_dir.join(file_path)) {
             Ok(content) => Some(content),
             Err(e) => {
                 let msg = format!("role prompt_file \"{file_path}\": {e}");
@@ -169,7 +184,7 @@ fn resolve_persona_instructions(
     if let Some(ref file_path) = p.instructions_file {
         let base = p.source_dir.as_deref().or(cwd);
         match base {
-            Some(base_dir) => match std::fs::read_to_string(base_dir.join(file_path)) {
+            Some(base_dir) => match read_subagent_resource(&base_dir.join(file_path)) {
                 Ok(content) => parts.push(content),
                 Err(e) => {
                     let err = format!(
@@ -543,6 +558,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn persona_instruction_file_rejects_literal_vendor_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let vendor_dir = dir.path().join(".claude");
+        std::fs::create_dir(&vendor_dir).unwrap();
+        std::fs::write(vendor_dir.join("canary.md"), "must not be loaded").unwrap();
+
+        let overrides = make_overrides(None, Some("blocked"), None, None, None);
+        let mut personas = HashMap::new();
+        personas.insert(
+            "blocked".to_string(),
+            SubagentPersona {
+                instructions_file: Some("canary.md".into()),
+                source_dir: Some(vendor_dir),
+                ..Default::default()
+            },
+        );
+
+        let result = resolve_effective_overrides(&overrides, None, &personas, None, None);
+        assert!(result.persona_instructions.is_none());
+        let error = result.persona_error.expect("vendor path must fail closed");
+        assert!(error.contains("refusing subagent resource"));
+        assert!(!error.contains("must not be loaded"));
+    }
+
     // ── Role prompt file loading ─────────────────────────────────
 
     #[test]
@@ -579,6 +619,34 @@ mod tests {
             resolve_effective_overrides(&overrides, Some(&role), &empty_personas(), None, None);
         assert!(result.role_prompt.is_none());
         assert!(result.role_prompt_warning.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn role_prompt_file_rejects_symlink_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let vendor_dir = dir.path().join(".codex");
+        std::fs::create_dir(&vendor_dir).unwrap();
+        std::fs::write(vendor_dir.join("canary.md"), "must not be loaded").unwrap();
+        let alias = dir.path().join(".grok");
+        symlink(&vendor_dir, &alias).unwrap();
+
+        let overrides = make_overrides(None, None, None, None, None);
+        let role = SubagentRole {
+            prompt_file: Some("canary.md".into()),
+            source_dir: Some(alias),
+            ..Default::default()
+        };
+        let result =
+            resolve_effective_overrides(&overrides, Some(&role), &empty_personas(), None, None);
+        assert!(result.role_prompt.is_none());
+        let warning = result
+            .role_prompt_warning
+            .expect("vendor symlink must fail closed");
+        assert!(warning.contains("refusing subagent resource"));
+        assert!(!warning.contains("must not be loaded"));
     }
 
     // ── No persona requested ─────────────────────────────────────

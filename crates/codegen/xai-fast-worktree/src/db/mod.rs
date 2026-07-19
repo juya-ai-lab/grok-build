@@ -203,8 +203,8 @@ impl WorktreeDb {
 
     /// Open the default DB at `~/.grok/worktrees.db`.
     ///
-    /// Discovers grok home via `$GROK_HOME`, falling back to the canonicalized
-    /// `$HOME/.grok` (matching `xai_grok_config::grok_home`).
+    /// Discovers grok home through `xai_grok_config`'s validated live-env
+    /// resolver, rejecting Claude/Codex vendor-state aliases.
     /// Path is resolved fresh each call (~1µs env var read) to support
     /// test overrides. Each call opens its own connection — callers in hot
     /// paths should cache the `WorktreeDb` instance.
@@ -338,15 +338,8 @@ pub fn now_epoch_secs() -> i64 {
 }
 
 pub fn resolve_grok_home() -> Result<PathBuf> {
-    if let Ok(v) = std::env::var("GROK_HOME") {
-        return Ok(PathBuf::from(v));
-    }
-    let home = PathBuf::from(std::env::var("HOME").context("neither $GROK_HOME nor $HOME is set")?);
-    // Canonicalize the home dir so worktree paths share the same physical .grok
-    // tree as trust/hooks even when it is symlinked. The dunce canonicalization
-    // must stay in sync with xai_grok_config::default_grok_home();
-    // home resolution deliberately differs ($HOME here vs std::env::home_dir()).
-    Ok(dunce::canonicalize(&home).unwrap_or(home).join(".grok"))
+    xai_grok_config::validated_grok_home()
+        .context("GROK_HOME is unavailable or resolves inside foreign vendor/shared state")
 }
 
 /// Serializes tests that mutate the process-global `GROK_HOME` env var so they

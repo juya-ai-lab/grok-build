@@ -42,6 +42,9 @@ pub(crate) struct ExportHealth {
 }
 
 fn gate_open(gates: &ContentGates, gate: Gate) -> bool {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED && !cfg!(test) {
+        return false;
+    }
     match gate {
         Gate::UserPrompts => gates.log_user_prompts,
         Gate::ToolDetails => gates.log_tool_details,

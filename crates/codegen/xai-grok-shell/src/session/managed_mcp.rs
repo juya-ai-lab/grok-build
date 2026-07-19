@@ -300,22 +300,6 @@ pub fn merge_managed_mcp_servers_sourced(
         }
     }
 
-    // ~/.claude.json
-    let claude_json_source = ConfigSource::ClaudeJson {
-        path: dirs::home_dir()
-            .map(|h| h.join(".claude.json"))
-            .unwrap_or_default(),
-    };
-    for server in crate::util::config::load_claude_json_mcp_servers(cwd, compat) {
-        if toml_claimed_names.contains(mcp_server_name(&server)) {
-            continue;
-        }
-        let key = mcp_server_key(&server);
-        servers
-            .entry(key)
-            .or_insert((server, claude_json_source.clone()));
-    }
-
     // ~/.cursor/mcp.json
     let cursor_mcp_source = ConfigSource::McpJson {
         path: dirs::home_dir()
@@ -408,7 +392,14 @@ fn load_plugin_mcp_servers(
     plugin_root: &str,
     plugin_data: &str,
 ) -> (Vec<acp::McpServer>, crate::util::config::McpOAuthConfigMap) {
-    let Some(config) = crate::util::config::read_mcp_json(mcp_path) else {
+    let Some(mcp_path) = xai_grok_config::validate_grok_path(mcp_path) else {
+        tracing::warn!(
+            plugin = plugin_name,
+            "refusing plugin MCP config under Claude/Codex vendor state"
+        );
+        return (vec![], crate::util::config::McpOAuthConfigMap::new());
+    };
+    let Some(config) = crate::util::config::read_mcp_json(&mcp_path) else {
         return (vec![], crate::util::config::McpOAuthConfigMap::new());
     };
     load_plugin_mcp_servers_from_config(&config, plugin_name, plugin_root, plugin_data)
@@ -914,6 +905,32 @@ enabled = false
             }
             other => panic!("expected Stdio server, got {:?}", other),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_plugin_mcp_revalidates_path_after_discovery() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let discovered_path = tmp.path().join("ordinary-plugin/mcp.json");
+        std::fs::create_dir_all(discovered_path.parent().unwrap()).unwrap();
+        std::fs::write(&discovered_path, r#"{"mcpServers":{}}"#).unwrap();
+
+        let vendor_path = tmp.path().join(".codex/plugins/leak/mcp.json");
+        std::fs::create_dir_all(vendor_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &vendor_path,
+            r#"{"mcpServers":{"leak":{"command":"must-not-load"}}}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(&discovered_path).unwrap();
+        symlink(&vendor_path, &discovered_path).unwrap();
+
+        let (servers, oauth) =
+            load_plugin_mcp_servers(&discovered_path, "swapped", "/plugin", "/data");
+        assert!(servers.is_empty());
+        assert!(oauth.is_empty());
     }
 
     #[test]

@@ -1,8 +1,7 @@
 //! Parse repo-level marketplace index.
 //!
 //! Catalog file lookup, in order: `.grok-plugin/marketplace.json` (preferred),
-//! `.grok-plugin/plugin.json`, `.claude-plugin/marketplace.json`,
-//! `.claude-plugin/plugin.json` (alternate layout compatibility).
+//! then `.grok-plugin/plugin.json`.
 //!
 //! When present, an index is the preferred browse source — faster than
 //! filesystem scanning and provides curated metadata (category, tags, homepage).
@@ -213,19 +212,14 @@ impl IndexEntry {
 /// Checks (in order):
 /// 1. `.grok-plugin/marketplace.json` (preferred xAI convention)
 /// 2. `.grok-plugin/plugin.json`
-/// 3. `.claude-plugin/marketplace.json` (alternate layout compatibility)
-/// 4. `.claude-plugin/plugin.json`
 ///
 /// Returns `None` if no file exists. Returns `Err` if a file exists
 /// but can't be parsed.
 pub fn load_index(marketplace_root: &Path) -> Result<Option<MarketplaceIndex>, String> {
     let grok_dir = marketplace_root.join(".grok-plugin");
-    let claude_dir = marketplace_root.join(".claude-plugin");
     let candidates = [
         grok_dir.join("marketplace.json"),
         grok_dir.join("plugin.json"),
-        claude_dir.join("marketplace.json"),
-        claude_dir.join("plugin.json"),
     ];
 
     for index_path in &candidates {
@@ -252,7 +246,7 @@ mod tests {
     #[test]
     fn parse_marketplace_json() {
         let json = r#"{
-            "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+            "$schema": "https://x.ai/grok/marketplace.schema.json",
             "name": "test-marketplace",
             "description": "Test marketplace",
             "owner": { "name": "Test" },
@@ -293,9 +287,9 @@ mod tests {
     #[test]
     fn load_index_invalid_json() {
         let dir = tempfile::tempdir().unwrap();
-        let claude_dir = dir.path().join(".claude-plugin");
-        std::fs::create_dir_all(&claude_dir).unwrap();
-        std::fs::write(claude_dir.join("marketplace.json"), "not json").unwrap();
+        let grok_dir = dir.path().join(".grok-plugin");
+        std::fs::create_dir_all(&grok_dir).unwrap();
+        std::fs::write(grok_dir.join("marketplace.json"), "not json").unwrap();
         let result = load_index(dir.path());
         assert!(result.is_err());
     }
@@ -316,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn load_index_grok_dir_takes_precedence_over_claude_dir() {
+    fn load_index_grok_dir_is_used_when_claude_dir_exists() {
         let dir = tempfile::tempdir().unwrap();
         for (sub, name) in [(".grok-plugin", "grok"), (".claude-plugin", "claude")] {
             let d = dir.path().join(sub);
@@ -331,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn load_index_valid() {
+    fn load_index_ignores_claude_plugin_dir() {
         let dir = tempfile::tempdir().unwrap();
         let claude_dir = dir.path().join(".claude-plugin");
         std::fs::create_dir_all(&claude_dir).unwrap();
@@ -341,8 +335,7 @@ mod tests {
         )
         .unwrap();
         let result = load_index(dir.path()).unwrap();
-        assert!(result.is_some());
-        assert_eq!(result.unwrap().name, "test");
+        assert!(result.is_none());
     }
 
     #[test]

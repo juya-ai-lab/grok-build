@@ -1581,7 +1581,8 @@ pub(crate) async fn handle_subagent_request(
             }
         }
     };
-    if let Some(trace_gcs_config) = gcs_upload_ctx
+    if (xai_grok_config::CONTENT_UPLOADS_ENABLED || cfg!(test))
+        && let Some(trace_gcs_config) = gcs_upload_ctx
         .upload_method
         .as_ref()
         .map(|method| crate::session::repo_changes::TraceExportConfig {

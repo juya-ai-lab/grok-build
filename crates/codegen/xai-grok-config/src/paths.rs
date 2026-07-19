@@ -1,6 +1,6 @@
 //! Filesystem locations for grok config files and binaries.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 static GROK_HOME: OnceLock<PathBuf> = OnceLock::new();
@@ -22,39 +22,232 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.js
 /// `~/.grok/marketplace-cache`. `dunce` strips the prefix whenever the path
 /// is safely representable in legacy form; on non-Windows it is identical to
 /// `std::fs::canonicalize`.
-///
-/// Keep the dunce canonicalization in sync with the hand-rolled duplicate in
-/// `xai_fast_worktree::db::resolve_grok_home` (deliberately standalone crate).
 pub fn default_grok_home() -> PathBuf {
     #[allow(deprecated)]
     let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
     dunce::canonicalize(&home).unwrap_or(home).join(".grok")
 }
 
+/// Resolve `$GROK_HOME` (or the normal `~/.grok` default) only when it is not
+/// Claude- or Codex-owned state.
+///
+/// This reads the live environment on every call so processes and test
+/// harnesses that intentionally change `GROK_HOME` do not bypass validation via
+/// [`GROK_HOME`]'s cache. An empty `GROK_HOME`, an unavailable user home, or a
+/// path equal to/below the effective `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
+/// `~/.claude`, or the Codex-shared `~/.agents` root returns `None`, as does a
+/// path whose exact basename is `.claude.json`.
+pub fn validated_grok_home() -> Option<PathBuf> {
+    #[allow(deprecated)]
+    let user_home = std::env::home_dir();
+    let grok_home = match std::env::var_os("GROK_HOME") {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        Some(_) => return None,
+        None => {
+            user_home.as_ref()?;
+            default_grok_home()
+        }
+    };
+    validate_grok_path_with(
+        &grok_home,
+        user_home.as_deref(),
+        std::env::var_os("CODEX_HOME"),
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+    )
+}
+
+/// Return `path` unchanged only when it is outside foreign/shared state roots.
+///
+/// Existing paths (and the deepest existing ancestor of a not-yet-created
+/// path) are canonicalized before the component-safe containment check. This
+/// catches symlink aliases without using substring checks that would reject an
+/// unrelated directory merely because its name contains `codex` or `claude`.
+/// The exact `.claude.json` basename is also treated as vendor state.
+pub fn validate_grok_path(path: &Path) -> Option<PathBuf> {
+    #[allow(deprecated)]
+    let user_home = std::env::home_dir();
+    validate_grok_path_with(
+        path,
+        user_home.as_deref(),
+        std::env::var_os("CODEX_HOME"),
+        std::env::var_os("CLAUDE_CONFIG_DIR"),
+    )
+}
+
+/// Perform the non-I/O portion of [`validate_grok_path`].
+///
+/// Rejects literal Claude/Codex state components and an exact `.claude.json`
+/// path component. This is useful at mutation boundaries that must fail before any
+/// canonicalization or filesystem metadata access. Existing symlink aliases
+/// still require the full [`validate_grok_path`] check afterwards.
+pub fn validate_grok_path_lexically(path: &Path) -> Option<PathBuf> {
+    if path.as_os_str().is_empty()
+        || has_vendor_state_component(path)
+        || has_vendor_state_basename(path)
+    {
+        return None;
+    }
+    Some(path.to_path_buf())
+}
+
+fn validate_grok_path_with(
+    path: &Path,
+    user_home: Option<&Path>,
+    codex_home_env: Option<std::ffi::OsString>,
+    claude_home_env: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    validate_grok_path_lexically(path)?;
+
+    let candidate = path_for_comparison(path)?;
+    validate_grok_path_lexically(&candidate)?;
+    let codex_home = codex_home_env
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| user_home.map(|home| home.join(".codex")));
+    let claude_home = claude_home_env
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let default_claude_home = user_home.map(|home| home.join(".claude"));
+    let agents_home = user_home.map(|home| home.join(".agents"));
+
+    for root in [codex_home, claude_home, default_claude_home, agents_home]
+        .into_iter()
+        .flatten()
+    {
+        let Some(root) = path_for_comparison(&root) else {
+            // A root supplied by the environment that cannot even be made
+            // absolute is not safe to reason around.
+            return None;
+        };
+        if path_is_within(&candidate, &root) {
+            return None;
+        }
+    }
+    Some(path.to_path_buf())
+}
+
+fn has_vendor_state_component(path: &Path) -> bool {
+    path.components().any(|component| {
+        let component = component.as_os_str();
+        [".claude", ".codex", ".agents", ".claude.json"]
+            .into_iter()
+            .any(|blocked| os_component_eq(component, std::ffi::OsStr::new(blocked)))
+    })
+}
+
+fn has_vendor_state_basename(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| os_component_eq(name, std::ffi::OsStr::new(".claude.json")))
+}
+
+#[cfg(not(windows))]
+fn os_component_eq(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    left == right
+}
+
+#[cfg(windows)]
+fn os_component_eq(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+/// Produce an absolute path suitable for containment comparisons. If the full
+/// path does not exist, canonicalize its deepest existing ancestor and append
+/// the unresolved tail before lexical normalization. This preserves symlink
+/// resolution for the part the filesystem can currently prove.
+fn path_for_comparison(path: &Path) -> Option<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+
+    if let Ok(canonical) = dunce::canonicalize(&absolute) {
+        return Some(normalize_lexically(&canonical));
+    }
+
+    let mut ancestor = absolute.as_path();
+    loop {
+        if let Ok(canonical) = dunce::canonicalize(ancestor) {
+            let tail = absolute.strip_prefix(ancestor).ok()?;
+            return Some(normalize_lexically(&canonical.join(tail)));
+        }
+        ancestor = ancestor.parent()?;
+    }
+}
+
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match components.last() {
+                Some(Component::Normal(_)) => {
+                    components.pop();
+                }
+                Some(Component::RootDir) => {}
+                _ => components.push(component),
+            },
+            _ => components.push(component),
+        }
+    }
+    components.into_iter().collect()
+}
+
+#[cfg(not(windows))]
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
+}
+
+#[cfg(windows)]
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    let mut path_components = path.components();
+    root.components().all(|root_component| {
+        path_components.next().is_some_and(|path_component| {
+            path_component
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&root_component.as_os_str().to_string_lossy())
+        })
+    })
+}
+
 /// Per-user config directory: `$GROK_HOME` or `~/.grok`. Created if needed.
 pub fn grok_home() -> PathBuf {
     GROK_HOME
         .get_or_init(|| {
-            let grok_home = if let Ok(v) = std::env::var("GROK_HOME") {
-                PathBuf::from(v)
-            } else {
-                default_grok_home()
-            };
+            let grok_home = validated_grok_home().unwrap_or_else(|| {
+                #[allow(deprecated)]
+                let fallback = (std::env::var_os("GROK_HOME").is_none()
+                    && std::env::home_dir().is_none())
+                .then(default_grok_home)
+                .and_then(|path| validate_grok_path(&path));
+                fallback.unwrap_or_else(|| invalid_grok_home())
+            });
             let _ = std::fs::create_dir_all(&grok_home);
             grok_home
         })
         .clone()
 }
 
-/// The user-global grok home, but only when one genuinely resolves: `Some` when
-/// `$GROK_HOME` is set or a home directory is found, `None` otherwise. Unlike
-/// [`grok_home()`], this never falls back to a cwd-relative `.grok`, so callers
-/// that *scan* user-global grok resources (hooks, marketplace sources, ...) don't
-/// mistake a project's `.grok` tree for the user-global one when no home resolves.
+fn invalid_grok_home() -> ! {
+    panic!(
+        "refusing invalid GROK_HOME: path is empty, named .claude.json, or inside CODEX_HOME, CLAUDE_CONFIG_DIR, ~/.claude, or ~/.agents state"
+    )
+}
+
+/// The user-global grok home, but only when one genuinely and safely resolves:
+/// `Some` when a valid `$GROK_HOME` is set or a home directory is found, `None`
+/// otherwise. Unlike [`grok_home()`], this never falls back to a cwd-relative
+/// `.grok`, so callers that *scan* user-global grok resources (hooks,
+/// marketplace sources, ...) don't mistake a project's `.grok` tree for the
+/// user-global one when no home resolves.
 pub fn user_grok_home() -> Option<PathBuf> {
-    #[allow(deprecated)]
-    let resolvable = std::env::var_os("GROK_HOME").is_some() || std::env::home_dir().is_some();
-    resolvable.then(grok_home)
+    let home = validated_grok_home()?;
+    let _ = std::fs::create_dir_all(&home);
+    Some(home)
 }
 
 /// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
@@ -80,6 +273,9 @@ pub fn system_config_dir() -> Option<PathBuf> {
 /// System path for the managed-settings.json used for settings compat, if it exists.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn claude_managed_settings_path() -> Option<PathBuf> {
+    if !crate::CLAUDE_CODE_COMPAT_ENABLED {
+        return None;
+    }
     let path = PathBuf::from(CLAUDE_MANAGED_SETTINGS_PATH);
     path.exists().then_some(path)
 }
@@ -93,7 +289,7 @@ pub fn claude_managed_settings_path() -> Option<PathBuf> {
 /// compat, whether or not it exists. `None` on unsupported platforms.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn claude_managed_settings_probe_path() -> Option<PathBuf> {
-    Some(PathBuf::from(CLAUDE_MANAGED_SETTINGS_PATH))
+    crate::CLAUDE_CODE_COMPAT_ENABLED.then(|| PathBuf::from(CLAUDE_MANAGED_SETTINGS_PATH))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -210,6 +406,216 @@ fn slugify(input: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn vendor_state_roots_and_subdirectories_are_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let codex_home = user_home.join(".codex");
+        let claude_home = user_home.join(".claude");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::fs::create_dir_all(&claude_home).unwrap();
+
+        assert_eq!(
+            validate_grok_path_with(&codex_home, Some(&user_home), None, None),
+            None
+        );
+        assert_eq!(
+            validate_grok_path_with(
+                &codex_home.join("grok-state/not-created-yet"),
+                Some(&user_home),
+                None,
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            validate_grok_path_with(
+                &claude_home.join("nested/grok-state"),
+                Some(&user_home),
+                None,
+                None,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_codex_home_env_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let codex_home = tmp.path().join("custom-codex-state");
+        std::fs::create_dir_all(&codex_home).unwrap();
+
+        assert_eq!(
+            validate_grok_path_with(
+                &codex_home.join("grok"),
+                Some(&user_home),
+                Some(codex_home.into_os_string()),
+                None,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn claude_config_env_default_claude_and_agents_roots_are_all_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let custom_claude = tmp.path().join("custom-claude-state");
+        let default_claude = user_home.join(".claude");
+        let agents_home = user_home.join(".agents");
+        for root in [&custom_claude, &default_claude, &agents_home] {
+            std::fs::create_dir_all(root).unwrap();
+        }
+        let claude_env = Some(custom_claude.clone().into_os_string());
+
+        for path in [
+            custom_claude.join("grok"),
+            default_claude.join("grok"),
+            agents_home.join("grok"),
+        ] {
+            assert_eq!(
+                validate_grok_path_with(&path, Some(&user_home), None, claude_env.clone(),),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn component_similar_normal_paths_remain_valid() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let normal = user_home.join("my-codex-cache").join("grok");
+
+        assert_eq!(
+            validate_grok_path_with(&normal, Some(&user_home), None, None),
+            Some(normal)
+        );
+
+        let agents_md = user_home.join("project/AGENTS.md");
+        assert_eq!(
+            validate_grok_path_with(&agents_md, Some(&user_home), None, None),
+            Some(agents_md)
+        );
+    }
+
+    #[test]
+    fn claude_json_basename_is_rejected_without_near_miss_false_positives() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(project.join("nested")).unwrap();
+
+        for path in [
+            project.join(".claude.json"),
+            project.join(".claude.json/hooks"),
+            PathBuf::from(".claude.json"),
+            project.join("nested/../.claude.json"),
+        ] {
+            assert_eq!(
+                validate_grok_path_with(&path, Some(&user_home), None, None),
+                None,
+                "{}",
+                path.display()
+            );
+            assert_eq!(validate_grok_path_lexically(&path), None);
+        }
+
+        for path in [
+            project.join(".claude.json.bak"),
+            project.join("my.claude.json"),
+        ] {
+            assert_eq!(
+                validate_grok_path_with(&path, Some(&user_home), None, None),
+                Some(path.clone())
+            );
+            assert_eq!(validate_grok_path_lexically(&path), Some(path));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn claude_json_basename_is_case_insensitive_on_windows() {
+        assert_eq!(
+            validate_grok_path_lexically(Path::new(r"C:\project\.CLAUDE.JSON")),
+            None
+        );
+    }
+
+    #[test]
+    fn vendor_named_components_are_rejected_anywhere_in_a_project() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let project = tmp.path().join("project");
+
+        for component in [".claude", ".codex", ".agents"] {
+            assert_eq!(
+                validate_grok_path_with(
+                    &project.join(component).join("grok-state"),
+                    Some(&user_home),
+                    None,
+                    None,
+                ),
+                None
+            );
+        }
+        let similarly_named = project.join(".codex-cache/grok-state");
+        assert_eq!(
+            validate_grok_path_with(&similarly_named, Some(&user_home), None, None),
+            Some(similarly_named)
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "refusing invalid GROK_HOME: path is empty, named .claude.json, or inside CODEX_HOME, CLAUDE_CONFIG_DIR, ~/.claude, or ~/.agents state"
+    )]
+    fn cached_grok_home_refuses_invalid_resolution_with_clear_error() {
+        invalid_grok_home();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_alias_into_vendor_state_is_rejected() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let codex_home = user_home.join(".codex");
+        let alias = tmp.path().join("apparently-grok");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::os::unix::fs::symlink(&codex_home, &alias).unwrap();
+
+        assert_eq!(
+            validate_grok_path_with(
+                &alias.join("nested/not-created-yet"),
+                Some(&user_home),
+                None,
+                None,
+            ),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_alias_to_claude_json_is_rejected_after_canonicalization() {
+        let tmp = TempDir::new().unwrap();
+        let user_home = tmp.path().join("home");
+        let claude_json = tmp.path().join(".claude.json");
+        let alias = tmp.path().join("apparently-safe.json");
+        std::fs::write(&claude_json, "{}").unwrap();
+        std::os::unix::fs::symlink(&claude_json, &alias).unwrap();
+
+        assert_eq!(
+            validate_grok_path_lexically(&alias),
+            Some(alias.clone()),
+            "the lexical phase cannot see through a safe-looking symlink"
+        );
+        assert_eq!(
+            validate_grok_path_with(&alias, Some(&user_home), None, None),
+            None
+        );
+    }
 
     /// Realistic CWDs that trigger the bug (URL-encoded > 255 bytes).
     const LONG_CWDS: &[&str] = &[

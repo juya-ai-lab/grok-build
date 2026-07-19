@@ -331,6 +331,9 @@ fn extract_hooks_from_settings_file(path: &Path) -> Vec<ImportableItem> {
 /// - MCP servers from `~/.claude.json` (global + per-project)
 /// - MCP servers from `.mcp.json` files (project)
 pub fn scan_importable_settings(cwd: &Path) -> ImportPlan {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return ImportPlan::default();
+    }
     let mut plan = ImportPlan::default();
 
     let all_paths = find_claude_settings_paths(cwd);
@@ -537,6 +540,9 @@ static MARKER_CACHE: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(No
 /// Use the bare version for read-time display logic that already has its own
 /// path (e.g. UI listings in `extensions/skills.rs` and `inspect.rs`).
 pub fn is_claude_import_marked() -> bool {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return true;
+    }
     if let Some(v) = *MARKER_CACHE.read().expect("MARKER_CACHE poisoned") {
         return v;
     }
@@ -687,6 +693,9 @@ fn write_import_marker(config_path: &Path) -> anyhow::Result<()> {
 /// still wants the cutoff applied so re-entering a workspace with `.claude/`
 /// content doesn't re-engage the runtime fallbacks.
 pub fn mark_claude_imported() -> anyhow::Result<()> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        anyhow::bail!("Claude Code compatibility is disabled in this build");
+    }
     let path = crate::util::grok_home::grok_home().join("config.toml");
     write_import_marker(&path)?;
     refresh_marker_cache(true);
@@ -705,6 +714,9 @@ pub fn mark_claude_imported() -> anyhow::Result<()> {
 /// via `git2::Repository::discover`), not `cwd/.grok/config.toml`, to avoid
 /// creating config files in unexpected subdirectories.
 pub fn apply_import(plan: &ImportPlan, cwd: &Path) -> anyhow::Result<ImportResult> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        anyhow::bail!("Claude Code compatibility is disabled in this build");
+    }
     let mut result = ImportResult::default();
 
     if !plan.global_items.is_empty() {
@@ -1218,6 +1230,16 @@ fn apply_hooks_to_dir(hooks_dir: &Path, items: &[ImportableItem]) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_disabled_public_import_entry_points_fail_closed() {
+        assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
+        let cwd = Path::new("/tmp/vendor-import-must-stay-disabled");
+
+        assert!(scan_importable_settings(cwd).is_empty());
+        assert!(mark_claude_imported().is_err());
+        assert!(apply_import(&ImportPlan::default(), cwd).is_err());
+    }
 
     #[test]
     fn format_rule_bash_with_pattern() {

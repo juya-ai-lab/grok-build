@@ -589,6 +589,9 @@ pub(crate) async fn upload_artifact_to_gcs(
     content_type: &str,
     artifact: &str,
 ) -> Option<String> {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED && !cfg!(test) {
+        return None;
+    }
     let _upload_start = std::time::Instant::now();
     let config = ctx.gcs_config.with_auth(Some(ctx.auth_manager.clone()));
     match upload_bytes(&config, gcs_path, content, content_type).await {
@@ -1480,6 +1483,9 @@ pub(crate) async fn upload_trace_artifact_deferred(
     artifact_name: &str,
     deadline: tokio::time::Instant,
 ) -> anyhow::Result<()> {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED && !cfg!(test) {
+        return Err(anyhow::anyhow!("content uploads are build-disabled"));
+    }
     if let Some(queue) = &ctx.upload_queue {
         let session_id = ctx.session_info.id.0.to_string();
         let outcome = queue
@@ -1557,6 +1563,16 @@ pub(crate) async fn upload_trace_artifact(
     content_type: &str,
     artifact_name: &str,
 ) {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED && !cfg!(test) {
+        if let Some(filename) = gcs_path.rsplit('/').next() {
+            super::manifest::skip_artifact(
+                &ctx.artifact_tracker,
+                filename,
+                "content_uploads_build_disabled",
+            );
+        }
+        return;
+    }
     let (ok, err_msg) = if let Some(queue) = &ctx.upload_queue {
         let session_id = ctx.session_info.id.0.to_string();
         match queue

@@ -148,6 +148,9 @@ async fn sync_bundle(agent: &MvpAgent, req: BundleSyncRequest) -> anyhow::Result
 /// forces a re-sync on the next post-auth event.
 pub(crate) fn bundle_cache_is_fresh(root: &Path, ttl: Duration) -> bool {
     let manifest = root.join("manifest.json");
+    if xai_grok_config::validate_grok_path(&manifest).is_none() {
+        return false;
+    }
     let Ok(meta) = std::fs::metadata(&manifest) else {
         return false;
     };
@@ -281,6 +284,12 @@ fn get_entry_at(root: &Path, kind: &str, name: &str) -> anyhow::Result<EntryGetR
         _ => anyhow::bail!("unknown entry kind: {kind}"),
     };
     let path = root.join(dir_name).join(format!("{name}.{ext}"));
+    if xai_grok_config::validate_grok_path(&path).is_none() {
+        anyhow::bail!(
+            "refusing bundle entry under Claude/Codex vendor state: {}",
+            path.display()
+        );
+    }
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("{kind} '{name}' not found in bundle cache"))?;
     Ok(EntryGetResult {
@@ -330,6 +339,7 @@ fn status_bundle_at(root: &Path) -> anyhow::Result<BundleStatusResult> {
 }
 fn persona_detail_from_toml(name: &str, root: &Path) -> Option<PersonaDetail> {
     let path = root.join("personas").join(format!("{name}.toml"));
+    xai_grok_config::validate_grok_path(&path)?;
     let content = std::fs::read_to_string(&path).ok()?;
     let table: toml::Value = toml::from_str(&content).ok()?;
     let desc = table
@@ -360,6 +370,7 @@ fn persona_detail_from_toml(name: &str, root: &Path) -> Option<PersonaDetail> {
 }
 fn role_detail_from_toml(name: &str, root: &Path) -> Option<RoleDetail> {
     let path = root.join("roles").join(format!("{name}.toml"));
+    xai_grok_config::validate_grok_path(&path)?;
     let content = std::fs::read_to_string(&path).ok()?;
     let table: toml::Value = toml::from_str(&content).ok()?;
     let desc = table
@@ -379,6 +390,9 @@ fn list_cached_entries(
     extension: &str,
 ) -> Vec<String> {
     let dir = root.join(dir_name);
+    if xai_grok_config::validate_grok_path(&dir).is_none() {
+        return Vec::new();
+    }
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
@@ -386,7 +400,7 @@ fn list_cached_entries(
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
-            if !path.is_file() {
+            if xai_grok_config::validate_grok_path(&path).is_none() || !path.is_file() {
                 return None;
             }
             let file_name = path.file_name()?.to_str()?;
@@ -413,7 +427,9 @@ fn list_cached_skill_entries(root: &Path, manifest: &BundleManifest) -> Vec<Stri
         .keys()
         .filter_map(|k| {
             let name = k.strip_prefix(prefix)?.strip_suffix("/SKILL.md")?;
-            root.join(k).is_file().then(|| name.to_owned())
+            let path = root.join(k);
+            (xai_grok_config::validate_grok_path(&path).is_some() && path.is_file())
+                .then(|| name.to_owned())
         })
         .collect();
     names.sort();

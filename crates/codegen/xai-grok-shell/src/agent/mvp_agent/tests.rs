@@ -670,11 +670,10 @@ fn resolve_agent_definition_defaults_to_grok_build() {
         unsafe { std::env::set_var("GROK_AGENT", v) }
     }
 }
-/// When model_agent_type = Some("codex"), the codex agent is selected even
-/// though the default chain would return grok-build.
+/// A build-disabled Codex model harness cannot revive the removed agent profile.
 #[test]
 #[serial_test::serial]
-fn resolve_agent_definition_model_agent_type_overrides_default() {
+fn resolve_agent_definition_rejects_build_disabled_model_agent_type() {
     let prev = std::env::var("GROK_AGENT").ok();
     unsafe {
         std::env::remove_var("GROK_AGENT");
@@ -687,7 +686,32 @@ fn resolve_agent_definition_model_agent_type_overrides_default() {
         None,
         Some("codex"),
     );
-    assert_eq!(def.name, "codex");
+    assert_eq!(def.name, config::DEFAULT_AGENT_TYPE);
+    if let Some(v) = prev {
+        unsafe { std::env::set_var("GROK_AGENT", v) }
+    }
+}
+
+/// The final shell selection boundary rejects an already-constructed reserved
+/// definition even if a caller bypassed the normal JSON/file parsers.
+#[test]
+#[serial_test::serial]
+fn resolve_agent_definition_rejects_constructed_codex_acp_profile() {
+    let prev = std::env::var("GROK_AGENT").ok();
+    unsafe {
+        std::env::remove_var("GROK_AGENT");
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let mut acp_profile = xai_grok_agent::AgentDefinition::grok_build_plan();
+    acp_profile.name = "CoDeX".to_string();
+    let def = MvpAgent::resolve_agent_definition(
+        tmp.path(),
+        None,
+        &config::AgentSelectionConfig::default(),
+        Some(acp_profile),
+        None,
+    );
+    assert_eq!(def.name, config::DEFAULT_AGENT_TYPE);
     if let Some(v) = prev {
         unsafe { std::env::set_var("GROK_AGENT", v) }
     }

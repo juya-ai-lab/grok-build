@@ -4043,6 +4043,36 @@ fn stdio_path_override(env: &[acp::EnvVariable]) -> Option<&str> {
         .map(|e| e.value.as_str())
 }
 
+fn disabled_vendor_env(name: &str) -> bool {
+    starts_with_ignore_ascii_case(name, "CLAUDE_")
+        || starts_with_ignore_ascii_case(name, "CODEX_")
+        || starts_with_ignore_ascii_case(name, "GROK_CLAUDE_")
+        || starts_with_ignore_ascii_case(name, "GROK_CODEX_")
+}
+
+fn starts_with_ignore_ascii_case(name: &str, prefix: &str) -> bool {
+    name.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+}
+
+fn apply_stdio_env(
+    cmd: &mut Command,
+    inherited_env_names: impl IntoIterator<Item = OsString>,
+    configured_env: &[acp::EnvVariable],
+) {
+    for env_name in inherited_env_names {
+        if env_name.to_str().is_some_and(disabled_vendor_env) {
+            cmd.env_remove(env_name);
+        }
+    }
+    for env_variable in configured_env {
+        if !disabled_vendor_env(&env_variable.name) {
+            cmd.env(&env_variable.name, &env_variable.value);
+        }
+    }
+}
+
 pub async fn start_mcp_server(
     mcp_server: acp::McpServer,
     session_id: Option<&str>,
@@ -4081,9 +4111,7 @@ pub async fn start_mcp_server(
             });
             let mut cmd = Command::new(&program);
             cmd.kill_on_drop(true).args(&spawn_args);
-            for env_variable in &env {
-                cmd.env(&env_variable.name, &env_variable.value);
-            }
+            apply_stdio_env(&mut cmd, std::env::vars_os().map(|(name, _)| name), &env);
             xai_grok_tools::util::detach_command(&mut cmd);
 
             let (transport, stderr_handle) =
@@ -4510,6 +4538,74 @@ mod tests {
 
         let env_none = vec![mk("FOO", "bar")];
         assert_eq!(stdio_path_override(&env_none), None);
+    }
+
+    #[test]
+    fn disabled_vendor_env_matching_is_ascii_case_insensitive_and_narrow() {
+        for name in [
+            "CLAUDE_CONFIG_DIR",
+            "claude_config_dir",
+            "ClAuDe_PLUGIN_ROOT",
+            "CODEX_HOME",
+            "cOdEx_HoMe",
+            "CoDeX_SESSION",
+            "GROK_CLAUDE_PLUGIN_ROOT",
+            "grok_claude_plugin_root",
+            "GrOk_CoDeX_SESSION",
+        ] {
+            assert!(disabled_vendor_env(name), "expected {name} to be disabled");
+        }
+
+        for name in [
+            "CLAUDE",
+            "CODEX",
+            "MY_CODEX_HOME",
+            "GROK_CLAUDE",
+            "GROK_CODEX",
+            "PATH",
+            "ORDINARY_VARIABLE",
+        ] {
+            assert!(
+                !disabled_vendor_env(name),
+                "expected {name} to be preserved"
+            );
+        }
+    }
+
+    #[test]
+    fn stdio_env_filter_removes_inherited_and_configured_vendor_signals() {
+        use std::ffi::OsStr;
+
+        let configured = vec![
+            acp::EnvVariable::new("CLAUDE_CONFIG_DIR", "/configured/claude"),
+            acp::EnvVariable::new("cLaUdE_PLUGIN_ROOT", "/configured/plugin"),
+            acp::EnvVariable::new("GrOk_CoDeX_CONFIG", "/configured/codex"),
+            acp::EnvVariable::new("ORDINARY_MCP_ENV", "preserved"),
+        ];
+        let inherited = [
+            OsString::from("cOdEx_HoMe"),
+            OsString::from("gRoK_cLaUdE_MCP_INHERITED_TEST"),
+            OsString::from("UNRELATED_INHERITED_ENV"),
+        ];
+        let mut cmd = Command::new("unused-test-command");
+        apply_stdio_env(&mut cmd, inherited, &configured);
+
+        let env_change = |key: &str| {
+            cmd.as_std()
+                .get_envs()
+                .find(|(name, _)| *name == OsStr::new(key))
+                .map(|(_, value)| value.map(OsStr::to_os_string))
+        };
+        assert_eq!(env_change("cOdEx_HoMe"), Some(None));
+        assert_eq!(env_change("gRoK_cLaUdE_MCP_INHERITED_TEST"), Some(None));
+        assert_eq!(env_change("CLAUDE_CONFIG_DIR"), None);
+        assert_eq!(env_change("cLaUdE_PLUGIN_ROOT"), None);
+        assert_eq!(env_change("GrOk_CoDeX_CONFIG"), None);
+        assert_eq!(
+            env_change("ORDINARY_MCP_ENV"),
+            Some(Some(OsString::from("preserved")))
+        );
+        assert_eq!(env_change("UNRELATED_INHERITED_ENV"), None);
     }
 
     #[test]

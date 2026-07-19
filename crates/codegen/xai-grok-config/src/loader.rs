@@ -11,6 +11,12 @@ use crate::version_overrides::{self, apply_version_overrides};
 
 /// Load and parse a TOML file, expanding `$VAR` references. Empty table if absent.
 pub fn load_toml_file(path: &Path) -> std::io::Result<toml::Value> {
+    if crate::validate_grok_path(path).is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "refusing to read TOML from Claude/Codex vendor state",
+        ));
+    }
     match std::fs::read_to_string(path) {
         Ok(s) => match toml::from_str::<toml::Value>(&s) {
             Ok(mut v) => {
@@ -464,6 +470,25 @@ pub fn expand_env_vars_in_string(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn toml_loader_rejects_symlink_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor = tmp.path().join(".claude");
+        let native = tmp.path().join(".grok");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::create_dir_all(&native).unwrap();
+        let secret = vendor.join("settings.toml");
+        std::fs::write(&secret, "[secret]\nvalue = 'must-not-load'\n").unwrap();
+        let alias = native.join("config.toml");
+        symlink(&secret, &alias).unwrap();
+
+        let error = load_toml_file(&alias).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    }
 
     #[test]
     fn full_layer_precedence_requirements_over_config_over_managed() {

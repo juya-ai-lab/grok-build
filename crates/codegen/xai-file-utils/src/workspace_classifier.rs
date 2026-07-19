@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 const EXCLUDED_DIR_NAMES: &[&str] = &[
     ".grok", ".cache", ".daemon", ".config", ".npm", ".cargo", ".rustup", ".vscode", ".gemini",
-    ".hermes", ".claude",
+    ".hermes", ".claude", ".codex", ".agents",
 ];
 
 fn known_os_dirs() -> Vec<PathBuf> {
@@ -280,6 +280,8 @@ mod tests {
                 assert!(!is_project_dir(&home.join(".gemini/antigravity")));
                 assert!(!is_project_dir(&home.join(".hermes/kanban")));
                 assert!(!is_project_dir(&home.join(".claude/projects")));
+                assert!(!is_project_dir(&home.join(".codex/sessions")));
+                assert!(!is_project_dir(&home.join(".agents/skills")));
             }
         }
     }

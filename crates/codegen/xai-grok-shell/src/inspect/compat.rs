@@ -200,36 +200,16 @@ mod tests {
         let report = resolve_without_env(Ok(&effective_config));
 
         assert!(!report.remote_settings_loaded);
-        assert_eq!(report.cells.len(), 13);
+        assert_eq!(report.cells.len(), 6);
         assert!(
             report
                 .cells
                 .iter()
                 .all(|cell| cell.enabled && cell.source == CompatSource::Default)
         );
-        assert_eq!(
-            report
-                .cells
-                .iter()
-                .filter(|entry| entry.vendor == "codex")
-                .map(|entry| entry.surface.as_str())
-                .collect::<Vec<_>>(),
-            vec!["sessions"]
-        );
-        let session = entry(&report, "codex", "sessions");
-        assert_eq!(session.enabled, CompatConfig::default().codex.sessions);
-        assert_eq!(session.source, CompatSource::Default);
+        assert!(report.cells.iter().all(|entry| entry.vendor == "cursor"));
         let json = serde_json::to_value(&report).unwrap();
         assert_eq!(json["remoteSettingsLoaded"], false);
-        assert_eq!(
-            serde_json::to_value(session).unwrap(),
-            serde_json::json!({
-                "vendor": "codex",
-                "surface": "sessions",
-                "enabled": true,
-                "source": "default"
-            })
-        );
     }
 
     #[test]
@@ -298,8 +278,11 @@ hooks = false
         let agents = entry(&report, "cursor", "agents");
         assert!(agents.enabled);
         assert_eq!(agents.source, CompatSource::Config);
-        let hooks = entry(&report, "claude", "hooks");
-        assert!(!hooks.enabled);
-        assert_eq!(hooks.source, CompatSource::Config);
+        assert!(
+            report
+                .cells
+                .iter()
+                .all(|entry| entry.vendor != "claude" && entry.vendor != "codex")
+        );
     }
 }

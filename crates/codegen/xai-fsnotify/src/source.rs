@@ -86,12 +86,6 @@ fn registry() -> &'static Mutex<HashMap<PathBuf, Weak<FsEventSource>>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Canonicalize so symlinked / relative spellings of the same directory map
-/// to one watcher. Falls back to the raw path if the dir doesn't exist yet.
-fn canonical_key(cwd: &Path) -> PathBuf {
-    dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf())
-}
-
 /// Runtime the event loop should run on: the registered process-lifetime
 /// runtime when present, otherwise the current one (tests / standalone use).
 fn event_loop_handle() -> Result<Handle, FsNotifyError> {
@@ -110,7 +104,11 @@ fn event_loop_handle() -> Result<Handle, FsNotifyError> {
 /// `config` is honored only when a watcher is actually created; a live watcher
 /// for the same directory is reused as-is regardless of the requested config.
 pub fn shared(cwd: PathBuf, config: FsConfig) -> Result<Arc<FsEventSource>, FsNotifyError> {
-    let key = canonical_key(&cwd);
+    // Reject vendor roots before the shared-registry key canonicalizes them.
+    // The second validation pass inside `prepare_watch_root` also catches an
+    // innocuous symlink alias targeting an effective vendor root.
+    let cwd = watcher::prepare_watch_root(cwd)?;
+    let key = cwd.clone();
 
     // Fast path: an existing live watcher for this directory.
     {
@@ -239,7 +237,7 @@ impl FsEventSource {
         // here keeps `discover_vcs` (and thus `lock_present`/`is_internal`) in
         // agreement with the watcher. Falls back to the raw path if `cwd`
         // doesn't exist yet, matching the watcher's own fallback.
-        let cwd = dunce::canonicalize(&cwd).unwrap_or(cwd);
+        let cwd = watcher::prepare_watch_root(cwd)?;
         // Resolve the Sapling kill-switch once so discovery and the watcher
         // agree on whether `.sl` is active.
         let sapling = watcher::sapling_enabled();

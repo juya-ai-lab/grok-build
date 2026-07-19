@@ -626,7 +626,7 @@ pub(crate) fn execute(
                         });
                     let entries = summaries
                         .into_iter()
-                        .map(crate::app::foreign_sessions::map_summary)
+                        .filter_map(crate::app::foreign_sessions::map_summary)
                         .collect();
                     TaskResult::ForeignSessionsScanned {
                         entries,

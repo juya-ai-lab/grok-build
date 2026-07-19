@@ -166,7 +166,11 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                 return vec![];
             };
             clear_startup_actions(app);
-            let source = crate::app::foreign_sessions::ForeignPickerSource::from_tool(hint.tool);
+            let Some(source) =
+                crate::app::foreign_sessions::ForeignPickerSource::from_tool(hint.tool)
+            else {
+                return vec![];
+            };
             tracing::info!(
                 tool = source.picker_source(),
                 age_secs = hint.age.as_secs(),

@@ -3,6 +3,11 @@
 //! payload preparation.
 #![allow(clippy::items_after_test_module)]
 use super::*;
+/// Partition the AGENTS.md / Claude.md / `.grok/rules/*.md` files returned
+/// by `read_agents_config_with_paths` into "workspace" (cwd / repo root /
+/// extra workspace user dir) and "user" (`~/.grok/`, including bundled
+/// content) buckets, mirroring the split between
+/// `<always_applied_workspace_rules>` and `<user_rules>`.
 /// Normalize a free-form name (e.g. an MCP server identifier) into a
 /// single safe filesystem segment.
 ///

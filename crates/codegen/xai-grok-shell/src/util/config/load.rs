@@ -23,7 +23,8 @@ fn toml_bool_sync(env_var: Option<&str>, section: &str, key: &str) -> bool {
     }
 }
 pub fn load_relay_sync_enabled_sync() -> bool {
-    toml_bool_sync(Some("GROK_RELAY_SYNC_ENABLED"), "relay", "enabled")
+    xai_grok_config::CONTENT_UPLOADS_ENABLED
+        && toml_bool_sync(Some("GROK_RELAY_SYNC_ENABLED"), "relay", "enabled")
 }
 /// `[harness]` blocking-upload settings from ONE effective-config parse:
 /// `block_for_upload` (default false — prompt handling waits for turn-end
@@ -210,7 +211,7 @@ default = "grok-code-fast-1"
         }
     }
     #[test]
-    fn test_relay_sync_enabled_true() {
+    fn test_relay_config_true_cannot_enable_build_disabled_sync() {
         let toml_str = r#"
 [relay]
 enabled = true
@@ -224,6 +225,8 @@ enabled = true
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             assert!(enabled);
+            assert!(!xai_grok_config::CONTENT_UPLOADS_ENABLED);
+            assert!(!load_relay_sync_enabled_sync());
         } else {
             panic!("Expected relay table");
         }

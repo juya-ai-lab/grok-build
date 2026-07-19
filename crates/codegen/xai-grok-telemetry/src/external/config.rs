@@ -350,17 +350,21 @@ impl ExternalOtelConfig {
         let logs_headers = resolve_signal_headers("OTEL_EXPORTER_OTLP_LOGS_HEADERS");
         let metrics_headers = resolve_signal_headers("OTEL_EXPORTER_OTLP_METRICS_HEADERS");
 
-        let gates = ContentGates {
-            log_user_prompts: getenv("OTEL_LOG_USER_PROMPTS")
-                .as_deref()
-                .and_then(env_bool)
-                .or_else(|| file.and_then(|f| f.log_user_prompts))
-                .unwrap_or(false),
-            log_tool_details: getenv("OTEL_LOG_TOOL_DETAILS")
-                .as_deref()
-                .and_then(env_bool)
-                .or_else(|| file.and_then(|f| f.log_tool_details))
-                .unwrap_or(false),
+        let gates = if xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            ContentGates {
+                log_user_prompts: getenv("OTEL_LOG_USER_PROMPTS")
+                    .as_deref()
+                    .and_then(env_bool)
+                    .or_else(|| file.and_then(|f| f.log_user_prompts))
+                    .unwrap_or(false),
+                log_tool_details: getenv("OTEL_LOG_TOOL_DETAILS")
+                    .as_deref()
+                    .and_then(env_bool)
+                    .or_else(|| file.and_then(|f| f.log_tool_details))
+                    .unwrap_or(false),
+            }
+        } else {
+            ContentGates::default()
         };
 
         let temporality = match getenv("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE")
@@ -635,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn content_gates_default_off_env_enables() {
+    fn content_gates_cannot_be_enabled_by_env() {
         let cfg = ExternalOtelConfig::resolve_with(
             env(&[
                 ("GROK_EXTERNAL_OTEL", "1"),
@@ -646,8 +650,8 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(cfg.gates.log_user_prompts);
-        assert!(cfg.gates.log_tool_details);
+        assert!(!cfg.gates.log_user_prompts);
+        assert!(!cfg.gates.log_tool_details);
     }
 
     #[test]
@@ -700,7 +704,7 @@ mod tests {
         assert_eq!(cfg.metrics_exporter, ExporterSelection::Otlp);
         assert_eq!(cfg.logs_exporter, ExporterSelection::Console);
         assert_eq!(cfg.metrics_endpoint, "https://file.example:4318/v1/metrics");
-        assert!(cfg.gates.log_user_prompts);
+        assert!(!cfg.gates.log_user_prompts);
 
         // Env wins over file on every layered key.
         let cfg = ExternalOtelConfig::resolve_with(

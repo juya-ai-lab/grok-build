@@ -51,8 +51,8 @@ pub struct Changelog {
 /// `Changelog` struct. Each format is fetched independently with its own
 /// cache file, so a failure in one doesn't block the other.
 pub struct ChangelogManager {
-    md_cache: PathBuf,
-    json_cache: PathBuf,
+    md_cache: Option<PathBuf>,
+    json_cache: Option<PathBuf>,
 }
 
 impl Default for ChangelogManager {
@@ -69,18 +69,14 @@ impl ChangelogManager {
         Self::from_env_home()
     }
 
-    /// Resolve cache paths from the live process environment (not the
-    /// `grok_home()` OnceLock). A seeded `$GROK_HOME` set on the pager
-    /// process is always honoured even if some earlier init path cached a
-    /// different home.
+    /// Resolve cache paths from the validated live process environment (not
+    /// the `grok_home()` OnceLock). Invalid Claude/Codex aliases disable the
+    /// disk cache instead of reading or writing vendor-owned state.
     fn from_env_home() -> Self {
-        let home = std::env::var_os("GROK_HOME")
-            .map(std::path::PathBuf::from)
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(crate::util::grok_home::grok_home);
+        let home = xai_grok_config::validated_grok_home();
         Self {
-            md_cache: home.join("CHANGELOG.md"),
-            json_cache: home.join("CHANGELOG.json"),
+            md_cache: home.as_ref().map(|home| home.join("CHANGELOG.md")),
+            json_cache: home.map(|home| home.join("CHANGELOG.json")),
         }
     }
 
@@ -117,7 +113,7 @@ impl ChangelogManager {
     fn fetch_with(&self, offline: bool, base: &str) -> Changelog {
         if offline {
             return Changelog {
-                markdown: read_cache(&self.md_cache),
+                markdown: self.md_cache.as_deref().and_then(read_cache),
                 entries: self.read_json_cache(),
             };
         }
@@ -129,7 +125,7 @@ impl ChangelogManager {
         let mut markdown = None;
         let mut entries = None;
         std::thread::scope(|s| {
-            let md_handle = s.spawn(|| self.fetch_and_cache(&md_url, &self.md_cache));
+            let md_handle = s.spawn(|| self.fetch_and_cache(&md_url));
             let json_handle = s.spawn(|| self.fetch_json(base, version));
             markdown = md_handle.join().ok().flatten();
             entries = json_handle.join().ok().flatten();
@@ -139,7 +135,7 @@ impl ChangelogManager {
         // any on-disk seed under `$GROK_HOME` even when offline mode was not
         // explicitly requested — keeps PTY/integration tests deterministic.
         if markdown.is_none() {
-            markdown = read_cache(&self.md_cache);
+            markdown = self.md_cache.as_deref().and_then(read_cache);
         }
         if entries.is_none() {
             entries = self.read_json_cache();
@@ -158,8 +154,10 @@ impl ChangelogManager {
         {
             match serde_json::from_str::<Vec<ChangelogEntry>>(&raw) {
                 Ok(entries) => {
-                    if let Err(e) = std::fs::write(&self.json_cache, &raw) {
-                        tracing::debug!(error = %e, "JSON changelog cache write failed");
+                    if let Some(cache) = &self.json_cache
+                        && let Err(e) = std::fs::write(cache, &raw)
+                    {
+                        tracing::debug!(error = %e, path = %cache.display(), "JSON changelog cache write failed");
                     }
                     return Some(entries);
                 }
@@ -173,7 +171,7 @@ impl ChangelogManager {
     }
 
     fn read_json_cache(&self) -> Option<Vec<ChangelogEntry>> {
-        let cached = read_cache(&self.json_cache)?;
+        let cached = read_cache(self.json_cache.as_deref()?)?;
         match serde_json::from_str(&cached) {
             Ok(entries) => Some(entries),
             Err(e) => {
@@ -185,16 +183,18 @@ impl ChangelogManager {
 
     /// Shared fetch-and-cache: try remote (3 s timeout), cache on success,
     /// fall back to disk cache on failure.
-    fn fetch_and_cache(&self, url: &str, cache_path: &std::path::Path) -> Option<String> {
+    fn fetch_and_cache(&self, url: &str) -> Option<String> {
         if let Ok(content) = fetch_blocking(url)
             && !content.trim().is_empty()
         {
-            if let Err(e) = std::fs::write(cache_path, &content) {
+            if let Some(cache_path) = &self.md_cache
+                && let Err(e) = std::fs::write(cache_path, &content)
+            {
                 tracing::debug!(error = %e, path = %cache_path.display(), "cache write failed");
             }
             return Some(content);
         }
-        read_cache(cache_path)
+        self.md_cache.as_deref().and_then(read_cache)
     }
 }
 
@@ -250,8 +250,8 @@ mod tests {
     /// `$GROK_HOME` env so tests never race the parallel harness.
     fn manager_for(home: &std::path::Path) -> ChangelogManager {
         ChangelogManager {
-            md_cache: home.join("CHANGELOG.md"),
-            json_cache: home.join("CHANGELOG.json"),
+            md_cache: Some(home.join("CHANGELOG.md")),
+            json_cache: Some(home.join("CHANGELOG.json")),
         }
     }
 

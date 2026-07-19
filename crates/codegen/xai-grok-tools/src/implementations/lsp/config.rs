@@ -188,6 +188,10 @@ pub fn load_servers(cwd: &Path) -> BTreeMap<String, LspServerConfig> {
 
 /// Load LSP server configs from a JSON file. Returns empty map on missing/invalid file.
 pub fn load_file(path: &Path) -> BTreeMap<String, LspServerConfig> {
+    if xai_grok_config::validate_grok_path(path).is_none() {
+        tracing::warn!(path = %path.display(), "refusing LSP config under Claude/Codex vendor state");
+        return BTreeMap::new();
+    }
     let s = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return BTreeMap::new(),
@@ -279,7 +283,7 @@ impl LspServerConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{LspServerConfig, filter_project_lsp_when_untrusted};
+    use super::{LspServerConfig, filter_project_lsp_when_untrusted, load_file};
     use crate::types::config_source::ConfigSource;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -315,6 +319,24 @@ mod tests {
             ),
         );
         m
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lsp_loader_rejects_symlink_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor = tmp.path().join(".codex");
+        let native = tmp.path().join(".grok");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::create_dir_all(&native).unwrap();
+        let target = vendor.join("lsp.json");
+        std::fs::write(&target, r#"{"leak":{"command":"must-not-load"}}"#).unwrap();
+        let alias = native.join("lsp.json");
+        symlink(target, &alias).unwrap();
+
+        assert!(load_file(&alias).is_empty());
     }
 
     #[test]

@@ -95,9 +95,16 @@ pub fn load_sources(config: &toml::Value) -> Vec<MarketplaceSource> {
                 } else {
                     path_str
                 };
-                SourceKind::Local {
-                    path: PathBuf::from(expanded),
+                let path = PathBuf::from(expanded);
+                if xai_grok_config::validate_grok_path(&path).is_none() {
+                    tracing::warn!(
+                        source = %raw.name,
+                        path = %path.display(),
+                        "refusing local marketplace under Claude/Codex vendor state"
+                    );
+                    return None;
                 }
+                SourceKind::Local { path }
             } else {
                 tracing::warn!(
                     "marketplace source '{}' has neither 'path' nor 'git'",
@@ -170,9 +177,16 @@ fn extract_marketplace_entries(
                 } else {
                     path_str
                 };
-                SourceKind::Local {
-                    path: PathBuf::from(expanded),
+                let path = PathBuf::from(expanded);
+                if xai_grok_config::validate_grok_path(&path).is_none() {
+                    tracing::warn!(
+                        source = %name,
+                        path = %path.display(),
+                        "refusing local marketplace under Claude/Codex vendor state"
+                    );
+                    continue;
                 }
+                SourceKind::Local { path }
             }
         };
         sources.push(MarketplaceSource {
@@ -182,20 +196,14 @@ fn extract_marketplace_entries(
     }
 }
 /// Loads additional marketplace sources from `settings.json` (`extraKnownMarketplaces`)
-/// and `known_marketplaces.json` files under `~/.grok/` and `~/.claude/`.
+/// and `known_marketplaces.json` files under the Grok home directory.
 pub fn load_extra_sources_from_settings(existing: &[MarketplaceSource]) -> Vec<MarketplaceSource> {
-    let roots: Vec<PathBuf> = [
-        xai_grok_config::user_grok_home(),
-        dirs::home_dir().map(|h| h.join(".claude")),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let roots: Vec<PathBuf> = xai_grok_config::user_grok_home().into_iter().collect();
     load_extra_sources_from_settings_in(existing, &roots)
 }
 
 /// Like [`load_extra_sources_from_settings`] but reads from explicit `roots`
-/// instead of `~/.grok`/`~/.claude`. Each root is checked for
+/// instead of the resolved Grok home. Each root is checked for
 /// `settings.local.json`, `settings.json` (`extraKnownMarketplaces` key), and
 /// `plugins/known_marketplaces.json`. Lets callers (e.g. first-run auto-register
 /// tests) stay isolated from the developer's real home dir.
@@ -217,6 +225,10 @@ pub fn load_extra_sources_from_settings_in(
     // known_marketplaces.json across roots — preserves the first-wins URL dedup
     // in extract_marketplace_entries. Don't reorder without auditing UI impact.
     for root in roots {
+        if xai_grok_config::validate_grok_path(root).is_none() {
+            tracing::warn!(path = %root.display(), "refusing marketplace settings root under Claude/Codex vendor state");
+            continue;
+        }
         for settings_name in ["settings.local.json", "settings.json"] {
             let path = root.join(settings_name);
             let content = match std::fs::read_to_string(&path) {
@@ -241,6 +253,9 @@ pub fn load_extra_sources_from_settings_in(
     }
 
     for root in roots {
+        if xai_grok_config::validate_grok_path(root).is_none() {
+            continue;
+        }
         let known = root.join("plugins").join("known_marketplaces.json");
         let content = match std::fs::read_to_string(&known) {
             Ok(c) => c,
@@ -284,6 +299,21 @@ mod tests {
         assert!(
             matches!(&sources[0].kind, SourceKind::Local { path } if path == &PathBuf::from("/home/user/plugins"))
         );
+    }
+
+    #[test]
+    fn parse_local_vendor_state_sources_are_rejected() {
+        for path in [
+            "/tmp/project/.claude/plugins",
+            "/tmp/project/.codex/plugins",
+            "/tmp/project/.agents/plugins",
+        ] {
+            let config: toml::Value = toml::from_str(&format!(
+                "[[marketplace.sources]]\nname = \"blocked\"\npath = \"{path}\"\n"
+            ))
+            .unwrap();
+            assert!(load_sources(&config).is_empty(), "must reject {path}");
+        }
     }
 
     #[test]

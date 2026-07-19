@@ -268,6 +268,13 @@ impl AuthManager {
         let scope = grok_com_config.auth_scope();
         let proxy_base_url =
             crate::agent::config::EndpointsConfig::from_effective_config().proxy_url();
+        let default_auth_path = xai_grok_config::validate_grok_path(&grok_home.join("auth.json"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "refusing auth path under foreign vendor/shared state: {}",
+                    grok_home.display()
+                )
+            });
 
         xai_grok_telemetry::unified_log::info(
             "AuthManager::new",
@@ -287,7 +294,7 @@ impl AuthManager {
             if let Ok(auth) = serde_json::from_str::<GrokAuth>(&inline_json) {
                 return Self::assemble(
                     Some(auth),
-                    grok_home.join("auth.json"),
+                    default_auth_path,
                     scope,
                     grok_com_config,
                     proxy_base_url,
@@ -298,9 +305,19 @@ impl AuthManager {
         }
 
         // GROK_AUTH_PATH: custom file path (overrides default $GROK_HOME/auth.json).
-        let path = std::env::var("GROK_AUTH_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| grok_home.join("auth.json"));
+        let path = match std::env::var_os("GROK_AUTH_PATH") {
+            Some(value) => {
+                let requested = PathBuf::from(value);
+                xai_grok_config::validate_grok_path(&requested).unwrap_or_else(|| {
+                    tracing::warn!(
+                        path = %requested.display(),
+                        "refusing GROK_AUTH_PATH under foreign vendor/shared state"
+                    );
+                    default_auth_path
+                })
+            }
+            None => default_auth_path,
+        };
 
         let (auth, auth_read_detail, initial_disk_state) = match read_auth_json(&path) {
             Ok(map) => {

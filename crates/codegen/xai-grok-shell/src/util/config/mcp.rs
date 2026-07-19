@@ -878,7 +878,7 @@ pub use xai_grok_workspace::project_config::{
 };
 
 pub fn load_mcp_json_file(path: &std::path::Path) -> Vec<acp::McpServer> {
-    if !path.is_file() {
+    if xai_grok_config::validate_grok_path(path).is_none() || !path.is_file() {
         return vec![];
     }
     let Some(value) = read_mcp_json(path) else {
@@ -990,7 +990,7 @@ pub fn load_claude_json_mcp_servers(
     compat: &CompatConfig,
 ) -> Vec<acp::McpServer> {
     // Compat gate: skip ~/.claude.json MCP loading when disabled.
-    if !compat.claude.mcps {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED || !compat.claude.mcps {
         return vec![];
     }
     // Phase 2 cutoff: if the user has imported, skip reading ~/.claude.json.
@@ -1010,7 +1010,7 @@ pub(crate) fn load_claude_json_mcp_servers_as_configs(
     compat: &CompatConfig,
 ) -> IndexMap<String, McpServerConfig> {
     // Compat gate: skip ~/.claude.json MCP loading when disabled.
-    if !compat.claude.mcps {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED || !compat.claude.mcps {
         return IndexMap::new();
     }
     // Phase 2 cutoff: if the user has imported, skip reading ~/.claude.json.
@@ -1029,6 +1029,9 @@ pub(crate) fn load_claude_json_mcp_servers_as_configs(
 pub fn load_claude_json_mcp_servers_as_configs_unfiltered(
     cwd: &std::path::Path,
 ) -> IndexMap<String, McpServerConfig> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return IndexMap::new();
+    }
     let Some(home) = dirs::home_dir() else {
         return IndexMap::new();
     };
@@ -1235,6 +1238,10 @@ fn load_claude_json_mcp_servers_from(
 
 /// Read and parse a JSON file. Returns `None` on I/O or parse errors (logged).
 pub(crate) fn read_mcp_json(path: &std::path::Path) -> Option<McpConfig> {
+    if xai_grok_config::validate_grok_path(path).is_none() {
+        tracing::warn!(path = %path.display(), "refusing MCP JSON under Claude/Codex vendor state");
+        return None;
+    }
     let content = std::fs::read_to_string(path)
         .map_err(|e| {
             tracing::warn!(error = %e, "failed to read MCP JSON");
@@ -1418,6 +1425,25 @@ pub fn session_registry_from_toml_opt(root: &TomlValue) -> Option<bool> {
 mod tests {
     use super::*;
     use toml::Value as TomlValue;
+
+    #[cfg(unix)]
+    #[test]
+    fn mcp_json_reader_rejects_symlink_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor = tmp.path().join(".agents");
+        let native = tmp.path().join(".grok");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::create_dir_all(&native).unwrap();
+        let target = vendor.join("mcp.json");
+        std::fs::write(&target, r#"{"mcpServers":{"leak":{"command":"true"}}}"#).unwrap();
+        let alias = native.join("mcp.json");
+        symlink(target, &alias).unwrap();
+
+        assert!(read_mcp_json(&alias).is_none());
+        assert!(load_mcp_json_file(&alias).is_empty());
+    }
 
     #[test]
     fn mcp_server_defined_at_checks_raw_key_presence() {

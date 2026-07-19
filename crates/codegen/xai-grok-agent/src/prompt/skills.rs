@@ -48,8 +48,8 @@ pub struct SkillsConfig {
 
 /// List all discovered skills with their metadata.
 ///
-/// Priority order: Local (cwd/.grok/skills, cwd/.agents/skills, cwd/.claude/skills) → Intermediate dirs →
-/// Repo (repo_root/.grok/skills, repo_root/.agents/skills, repo_root/.claude/skills) → User (~/.grok/skills, ~/.agents/skills, ~/.claude/skills)
+/// Priority order: Local (`cwd/.grok/skills`, optionally
+/// `cwd/.cursor/skills`) → Intermediate dirs → Repo → User.
 /// → additional paths from `config.paths`
 /// → Server (injected `config.server_skill_dirs`)
 /// → Bundled (injected `config.bundled_skill_dirs` + `~/.grok/bundled`; lowest precedence).
@@ -59,8 +59,7 @@ pub struct SkillsConfig {
 ///
 /// When `working_directory` is `None`, only User-scoped skills are returned.
 ///
-/// `compat` gates which vendor (`.claude`/`.cursor`) dirs are scanned; pass
-/// `CompatConfig::default()` to preserve the historical all-vendors behavior.
+/// `compat` gates Cursor directories. Claude directories are build-disabled.
 pub async fn list_skills(
     working_directory: Option<&str>,
     config: &SkillsConfig,
@@ -132,6 +131,11 @@ pub async fn list_skills_with_plugins(
         }
     }
 
+    // These vendor resume commands are build-disabled, not user-configurable.
+    // Filter the final merged identities so no discovery source (including
+    // injected and plugin sources) can restore a hand-invocable command.
+    merged.retain(|skill| !matches!(skill.name.as_str(), "resume-claude" | "resume-codex"));
+
     merged
 }
 
@@ -158,7 +162,7 @@ pub fn collect_skill_config_dirs(
 
     // Helper: add if the directory exists and hasn't been seen yet.
     let mut try_add = |dir: PathBuf| {
-        if !dir.is_dir() {
+        if !is_allowed_skill_source_path(&dir) || !dir.is_dir() {
             return;
         }
         let canonical = dunce::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
@@ -167,9 +171,8 @@ pub fn collect_skill_config_dirs(
         }
     };
 
-    // Vendor dirs (`.claude`/`.cursor`) are gated by the resolved compat
-    // config; `.grok` and `.agents` are always present. When all cells are on
-    // this list equals the historical `[".grok", ".agents", ".claude", ".cursor"]`.
+    // `.cursor` is gated by resolved compat and `.grok` is always present.
+    // Claude and Codex shared config directories are build-disabled.
     let config_dir_names = compat.skill_config_dirs();
 
     // Priority 1 & 2: Walk from cwd up to the git root.
@@ -200,15 +203,11 @@ pub fn collect_skill_config_dirs(
     }
 
     // Priority 3: Global user dirs. `.grok` comes from `grok_home` (which may
-    // be overridden), so it's handled separately; `.agents` is always added,
-    // while `.claude`/`.cursor` are gated by the skills compat cells.
+    // be overridden), so it's handled separately; `.cursor` is gated by its
+    // skills compat cell. The Codex shared `.agents` root is not probed.
     try_add(grok_home);
     #[allow(deprecated)]
     if let Some(home) = std::env::home_dir() {
-        try_add(home.join(".agents"));
-        if compat.claude.skills {
-            try_add(home.join(".claude"));
-        }
         if compat.cursor.skills {
             try_add(home.join(".cursor"));
         }
@@ -217,6 +216,9 @@ pub fn collect_skill_config_dirs(
     // Priority 4: Config paths (skills.paths entries).
     for raw in config_paths {
         let expanded = expand_tilde(raw);
+        if !is_allowed_skill_source_path(&expanded) {
+            continue;
+        }
         if expanded.is_dir() {
             try_add(expanded);
         } else if expanded.is_file()
@@ -232,7 +234,7 @@ pub fn collect_skill_config_dirs(
 /// Determine the skill scope for a config directory based on its location
 /// relative to `cwd`, `git_root`, and the user's home directory.
 fn scope_for_config_dir(dir: &Path, cwd: Option<&Path>, git_root: Option<&Path>) -> SkillScope {
-    // Home-level dirs (e.g. ~/.grok/, ~/.agents/, ~/.claude/) are User scope.
+    // Home-level dirs (e.g. ~/.grok/ and ~/.cursor/) are User scope.
     #[allow(deprecated)]
     if let Some(home) = std::env::home_dir()
         && dir.parent() == Some(home.as_path())
@@ -260,7 +262,7 @@ fn scope_for_config_dir(dir: &Path, cwd: Option<&Path>, git_root: Option<&Path>)
 /// Collect paths into `out`, deduplicating by canonical path.
 ///
 /// Skill/command discovery does **not** consult `.gitignore`. Auto-discovery
-/// only visits known config roots (`.grok`, `.agents`, `.claude`, `.cursor`),
+/// only visits known config roots (`.grok`, `.cursor`),
 /// which teams often gitignore as local-only config while still expecting them
 /// to load. Hiding a skill uses `[skills] ignore` in config, not repo ignore
 /// rules. AGENTS.md discovery still honors gitignore — that is content, not
@@ -322,12 +324,14 @@ async fn list_skills_with_options(
     }
 
     let bundled_dir = global_dir.join("bundled");
-    collect_discovered_paths(
-        find_skill_paths(&bundled_dir),
-        SkillScope::Bundled,
-        &mut seen_canonical_paths,
-        &mut skill_files,
-    );
+    if is_allowed_skill_source_path(&bundled_dir) {
+        collect_discovered_paths(
+            find_skill_paths(&bundled_dir),
+            SkillScope::Bundled,
+            &mut seen_canonical_paths,
+            &mut skill_files,
+        );
+    }
 
     parse_skill_files(skill_files)
 }
@@ -342,6 +346,20 @@ fn expand_tilde(raw: &str) -> PathBuf {
     PathBuf::from(raw)
 }
 
+/// Reject foreign/shared vendor state before any skill source is statted or
+/// traversed. `validate_grok_path` also resolves existing symlink ancestors,
+/// so an innocuous-looking alias cannot restore a blocked source.
+fn is_allowed_skill_source_path(path: &Path) -> bool {
+    if xai_grok_config::validate_grok_path(path).is_some() {
+        return true;
+    }
+    tracing::warn!(
+        path = %path.display(),
+        "refusing skill source under Claude/Codex vendor state"
+    );
+    false
+}
+
 /// Collect and parse skills from `SkillsConfig.paths` entries.
 ///
 /// Each entry is either a direct SKILL.md file or a directory to walk recursively.
@@ -353,6 +371,9 @@ fn collect_config_skills(config_paths: &[String], git_root: Option<&Path>) -> Ve
 
     for raw in config_paths {
         let expanded = expand_tilde(raw);
+        if !is_allowed_skill_source_path(&expanded) {
+            continue;
+        }
         let scope = match git_root {
             Some(root) if expanded.starts_with(root) => SkillScope::Repo,
             _ => SkillScope::User,
@@ -395,7 +416,7 @@ fn collect_injected_skills(dirs: &[String], scope: SkillScope) -> Vec<SkillInfo>
 
     for raw in dirs {
         let expanded = expand_tilde(raw);
-        if !expanded.is_dir() {
+        if !is_allowed_skill_source_path(&expanded) || !expanded.is_dir() {
             continue;
         }
         let mut dir_paths = Vec::new();
@@ -570,7 +591,7 @@ fn collect_plugin_skills(registry: &crate::plugins::PluginRegistry) -> Vec<Skill
 
         // Skills: shared discovery primitive (see `find_skill_md_paths`).
         for skill_dir in &plugin.skill_dirs {
-            if !skill_dir.is_dir() {
+            if !is_allowed_skill_source_path(skill_dir) || !skill_dir.is_dir() {
                 continue;
             }
             paths.extend(
@@ -582,6 +603,9 @@ fn collect_plugin_skills(registry: &crate::plugins::PluginRegistry) -> Vec<Skill
 
         // Commands (.md files in command directories)
         for cmd_dir in &plugin.command_dirs {
+            if !is_allowed_skill_source_path(cmd_dir) {
+                continue;
+            }
             paths.extend(
                 scan_md_files(cmd_dir)
                     .into_iter()
@@ -762,6 +786,67 @@ mod tests {
             SkillScope::Local,
             "local skill must shadow the server-synced one"
         );
+    }
+
+    #[tokio::test]
+    async fn vendor_resume_skills_are_removed_after_all_sources_are_merged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        init_git_repo(&repo);
+
+        let local = repo.join(".grok").join("skills");
+        write_skill_md(&local.join("resume-claude"), "resume-claude");
+        write_skill_md(&local.join("local-safe"), "local-safe");
+
+        let config_dir = tmp.path().join("config-skills");
+        write_skill_md(&config_dir.join("resume-codex"), "resume-codex");
+        write_skill_md(&config_dir.join("config-safe"), "config-safe");
+
+        let server_dir = tmp.path().join("server-skills");
+        write_skill_md(&server_dir.join("resume-claude"), "resume-claude");
+        write_skill_md(&server_dir.join("server-safe"), "server-safe");
+
+        let bundled_dir = tmp.path().join("bundled-skills");
+        write_skill_md(&bundled_dir.join("resume-codex"), "resume-codex");
+        write_skill_md(&bundled_dir.join("bundled-safe"), "bundled-safe");
+
+        let plugin_root = tmp.path().join("plugin");
+        let plugin_skills = plugin_root.join("skills");
+        write_skill_md(&plugin_skills.join("resume-claude"), "resume-claude");
+        write_skill_md(&plugin_skills.join("plugin-safe"), "plugin-safe");
+        let registry =
+            make_registry_with_skill_dirs("vendor-commands", &plugin_root, vec![plugin_skills]);
+
+        let config = SkillsConfig {
+            paths: vec![config_dir.to_string_lossy().into_owned()],
+            server_skill_dirs: vec![server_dir.to_string_lossy().into_owned()],
+            bundled_skill_dirs: vec![bundled_dir.to_string_lossy().into_owned()],
+            ..Default::default()
+        };
+        let skills = list_skills_with_plugins(
+            Some(&repo.to_string_lossy()),
+            &config,
+            Some(&registry),
+            CompatConfig::default(),
+        )
+        .await;
+        let names: HashSet<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
+
+        assert!(!names.contains("resume-claude"));
+        assert!(!names.contains("resume-codex"));
+        for safe in [
+            "local-safe",
+            "config-safe",
+            "server-safe",
+            "bundled-safe",
+            "plugin-safe",
+        ] {
+            assert!(
+                names.contains(safe),
+                "source marker {safe} was not discovered"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1452,6 +1537,98 @@ mod tests {
         assert_eq!(skills[0].name, "my-skill");
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn explicit_skill_sources_reject_vendor_paths_and_symlink_aliases() {
+        let tmp = tempfile::tempdir().unwrap();
+        let grok_source = tmp.path().join(".grok").join("custom-skills");
+        let cursor_source = tmp.path().join(".cursor").join("custom-skills");
+        write_skill_md(&grok_source.join("grok-safe"), "grok-safe");
+        write_skill_md(&cursor_source.join("cursor-safe"), "cursor-safe");
+
+        let mut vendor_sources = Vec::new();
+        let mut vendor_command_dirs = Vec::new();
+        for component in [".claude", ".codex", ".agents"] {
+            let source = tmp.path().join(component).join("custom-skills");
+            write_skill_md(&source.join("blocked"), "blocked");
+            vendor_sources.push(source);
+
+            let commands = tmp.path().join(component).join("commands");
+            fs::create_dir_all(&commands).unwrap();
+            fs::write(
+                commands.join("blocked-command.md"),
+                "---\nname: blocked-command\ndescription: blocked\n---\n",
+            )
+            .unwrap();
+            vendor_command_dirs.push(commands);
+        }
+
+        let alias = tmp.path().join("apparently-safe-skills");
+        std::os::unix::fs::symlink(&vendor_sources[2], &alias).unwrap();
+
+        let source_paths: Vec<String> = [grok_source.clone(), cursor_source.clone()]
+            .into_iter()
+            .chain(vendor_sources.iter().cloned())
+            .chain(std::iter::once(alias.clone()))
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        for skills in [
+            collect_config_skills(&source_paths, None),
+            collect_injected_skills(&source_paths, SkillScope::Server),
+            collect_injected_skills(&source_paths, SkillScope::Bundled),
+        ] {
+            let names: HashSet<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
+            assert_eq!(names, HashSet::from(["grok-safe", "cursor-safe"]));
+        }
+
+        let safe_commands = tmp.path().join("safe-commands");
+        fs::create_dir_all(&safe_commands).unwrap();
+        fs::write(
+            safe_commands.join("safe-command.md"),
+            "---\nname: safe-command\ndescription: safe\n---\n",
+        )
+        .unwrap();
+        let registry = make_registry_with_sources(
+            "guarded",
+            &tmp.path().join("plugin-root"),
+            [grok_source, cursor_source]
+                .into_iter()
+                .chain(vendor_sources)
+                .chain(std::iter::once(alias))
+                .collect(),
+            std::iter::once(safe_commands)
+                .chain(vendor_command_dirs)
+                .collect(),
+        );
+        let plugin_names: HashSet<String> = collect_plugin_skills(&registry)
+            .into_iter()
+            .map(|skill| skill.name)
+            .collect();
+        assert_eq!(
+            plugin_names,
+            HashSet::from([
+                "grok-safe".to_string(),
+                "cursor-safe".to_string(),
+                "safe-command".to_string(),
+            ])
+        );
+
+        let blocked_global = tmp.path().join(".agents").join("fake-grok-home");
+        write_skill_md(
+            &blocked_global
+                .join("bundled")
+                .join("skills")
+                .join("blocked-bundled"),
+            "blocked-bundled",
+        );
+        assert!(
+            list_skills_with_options(None, None, &blocked_global, CompatConfig::default())
+                .await
+                .is_empty(),
+            "a vendor-backed bundled root must be rejected"
+        );
+    }
+
     #[test]
     fn collect_config_skills_scope_user_outside_repo() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1624,10 +1801,11 @@ mod tests {
 
     // ── Manifest `skills` entries pointing directly at skill dirs ──
 
-    fn make_registry_with_skill_dirs(
+    fn make_registry_with_sources(
         name: &str,
         root: &Path,
         skill_dirs: Vec<PathBuf>,
+        command_dirs: Vec<PathBuf>,
     ) -> crate::plugins::PluginRegistry {
         use crate::plugins::discovery::{DiscoveredPlugin, PluginId};
         use crate::plugins::manifest::PluginManifest;
@@ -1656,7 +1834,7 @@ mod tests {
             origin: crate::plugins::PluginOrigin::UserGrok,
             trusted: true,
             skill_dirs,
-            command_dirs: vec![],
+            command_dirs,
             agent_dirs: vec![],
             hooks_path: None,
             mcp_config_path: None,
@@ -1664,6 +1842,14 @@ mod tests {
             conflict: None,
         };
         crate::plugins::PluginRegistry::from_discovered(vec![dp], &[], &[name.to_string()])
+    }
+
+    fn make_registry_with_skill_dirs(
+        name: &str,
+        root: &Path,
+        skill_dirs: Vec<PathBuf>,
+    ) -> crate::plugins::PluginRegistry {
+        make_registry_with_sources(name, root, skill_dirs, Vec::new())
     }
 
     #[test]
@@ -2184,12 +2370,10 @@ mod tests {
 
     // ── Command file discovery ────────────────────────────────────────
 
-    /// Regression: project `.claude/commands` often sits under a full `.claude/**`
-    /// gitignore with only `!.claude/skills/**` re-included (local-only vendor
-    /// config). User-scoped `~/.claude/commands` still loaded; project commands
-    /// did not — so `/frontend` never appeared for the large multi-package repo.
+    /// Build-disabled vendor command and skill paths remain excluded even when
+    /// their resolved compatibility structs are manually mutated.
     #[tokio::test]
-    async fn project_claude_commands_load_even_when_gitignored() {
+    async fn project_build_disabled_commands_and_skills_remain_disabled() {
         let tmp = tempfile::tempdir().expect("create tempdir");
         let repo_root = tmp.path().join("repo");
         fs::create_dir_all(&repo_root).expect("create repo dir");
@@ -2216,29 +2400,50 @@ mod tests {
             "bp-deltas",
         );
 
+        let agents_dir = repo_root.join(".agents");
+        let agents_commands = agents_dir.join("commands");
+        fs::create_dir_all(&agents_commands).expect("create .agents commands dir");
+        fs::write(
+            agents_commands.join("codex-command.md"),
+            "---\nname: codex-command\ndescription: disabled shared command\n---\n",
+        )
+        .expect("write .agents command");
+        write_skill_md(
+            &agents_dir.join("skills").join("codex-skill"),
+            "codex-skill",
+        );
+
+        write_skill_md(
+            &repo_root.join(".grok").join("skills").join("grok-live"),
+            "grok-live",
+        );
+
         let repo_str = repo_root.to_str().unwrap_or_default();
-        let skills =
-            list_skills_with_options(Some(repo_str), None, tmp.path(), CompatConfig::default())
-                .await;
+        let mut compat = CompatConfig::default();
+        compat.claude.skills = true;
+        compat.codex.skills = true;
+        let skills = list_skills_with_options(Some(repo_str), None, tmp.path(), compat).await;
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
 
         assert!(
-            names.contains(&"frontend"),
-            "gitignored project .claude/commands/frontend.md must load as a slash skill, got: {names:?}"
+            names.contains(&"grok-live"),
+            ".grok must remain enabled: {names:?}"
         );
         assert!(
-            names.contains(&"bp-deltas"),
-            "project .claude/skills still loads, got: {names:?}"
+            !names.contains(&"frontend"),
+            "project .claude/commands must remain build-disabled, got: {names:?}"
         );
-
-        let frontend = skills
-            .iter()
-            .find(|s| s.name == "frontend")
-            .expect("frontend skill");
         assert!(
-            frontend.path.contains("commands"),
-            "frontend should come from commands/, path={}",
-            frontend.path
+            !names.contains(&"bp-deltas"),
+            "project .claude/skills must remain build-disabled, got: {names:?}"
+        );
+        assert!(
+            !names.contains(&"codex-command"),
+            "project .agents/commands must not be auto-read, got: {names:?}"
+        );
+        assert!(
+            !names.contains(&"codex-skill"),
+            "project .agents/skills must not be auto-read, got: {names:?}"
         );
     }
 
@@ -2283,9 +2488,9 @@ mod tests {
         fs::create_dir_all(&repo_root).expect("create repo dir");
         init_git_repo(&repo_root);
 
-        let claude_dir = repo_root.join(".claude");
-        write_skill_md(&claude_dir.join("skills").join("deploy"), "deploy");
-        let commands = claude_dir.join("commands");
+        let cursor_dir = repo_root.join(".cursor");
+        write_skill_md(&cursor_dir.join("skills").join("deploy"), "deploy");
+        let commands = cursor_dir.join("commands");
         fs::create_dir_all(&commands).expect("create commands dir");
         fs::write(
             commands.join("deploy.md"),
@@ -2445,13 +2650,23 @@ mod tests {
 
         let ends_with = |dirs: &[PathBuf], suffix: &str| dirs.iter().any(|d| d.ends_with(suffix));
 
-        // All on → both vendor dirs present (byte-for-byte legacy behavior).
-        let all =
-            collect_skill_config_dirs(Some(cwd), None, tmp.path(), &[], CompatConfig::default());
-        assert!(ends_with(&all, ".claude"), "claude missing: {all:?}");
+        // Manually mutating build-disabled vendor fields must not restore their
+        // automatic roots, while Cursor remains enabled.
+        let mut compat = CompatConfig::default();
+        compat.claude.skills = true;
+        compat.codex.skills = true;
+        let all = collect_skill_config_dirs(Some(cwd), None, tmp.path(), &[], compat);
+        assert!(
+            !ends_with(&all, ".claude"),
+            "claude must remain build-disabled: {all:?}"
+        );
+        assert!(
+            !ends_with(&all, ".agents"),
+            "the Codex shared root must not be probed: {all:?}"
+        );
         assert!(ends_with(&all, ".cursor"), "cursor missing: {all:?}");
 
-        // cursor.skills off → .cursor dropped, .claude kept.
+        // cursor.skills off drops only Cursor; generic roots remain.
         let mut compat = CompatConfig::default();
         compat.cursor.skills = false;
         let dirs = collect_skill_config_dirs(Some(cwd), None, tmp.path(), &[], compat);
@@ -2459,7 +2674,10 @@ mod tests {
             !ends_with(&dirs, ".cursor"),
             "cursor must be gated off: {dirs:?}"
         );
-        assert!(ends_with(&dirs, ".claude"), "claude must remain: {dirs:?}");
+        assert!(
+            !ends_with(&dirs, ".claude"),
+            "claude must stay off: {dirs:?}"
+        );
         assert!(ends_with(&dirs, ".grok"), "grok must remain: {dirs:?}");
     }
 

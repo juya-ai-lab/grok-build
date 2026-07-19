@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use strum::{AsRefStr, Display, EnumIter, EnumString, IntoStaticStr};
-use xai_grok_tools::implementations::codex;
 use xai_grok_tools::implementations::grok_build;
 use xai_grok_tools::implementations::grok_build_concise;
 use xai_grok_tools::implementations::memory;
@@ -15,6 +14,25 @@ use xai_grok_tools::implementations::opencode;
 use xai_grok_tools::implementations::search_tool;
 use xai_grok_tools::implementations::use_tool;
 use xai_grok_tools::registry::types::{ToolConfig, ToolServerConfig};
+
+/// Whether `name` is reserved for an agent profile that is disabled in this build.
+///
+/// Keep this exact-name check separate from the Codex-derived native tool namespace:
+/// agents such as `codex-helper` remain valid, and the generic ported tools remain
+/// available.
+pub fn is_build_disabled_agent_name(name: &str) -> bool {
+    !xai_grok_config::CODEX_COMPAT_ENABLED && name.trim().eq_ignore_ascii_case("codex")
+}
+
+fn ensure_agent_name_is_build_enabled(name: &str) -> Result<(), AgentBuildError> {
+    if is_build_disabled_agent_name(name) {
+        return Err(AgentBuildError::InvalidConfig(
+            "agent name 'codex' is reserved and build-disabled".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Process-global registry of externally-provided toolset presets.
 ///
 /// # Visibility
@@ -54,6 +72,9 @@ fn toolset_preset_registry()
 /// presets are enumerated by [`preset_names`] / [`all_toolset_presets`] and
 /// resolvable via [`toolset_for_preset`]. See [`TOOLSET_PRESETS`].
 pub fn register_toolset_preset(name: &str, builder: ToolsetPresetBuilder) {
+    if name.trim().eq_ignore_ascii_case("codex") && !xai_grok_config::CODEX_COMPAT_ENABLED {
+        return;
+    }
     toolset_preset_registry()
         .lock()
         .expect("toolset preset registry poisoned")
@@ -66,6 +87,9 @@ pub fn register_toolset_preset(name: &str, builder: ToolsetPresetBuilder) {
 /// preset enumeration (manifest generation, product preset sets, …). See
 /// [`TOOLSET_PRESETS`].
 pub fn register_internal_toolset_preset(name: &str, builder: ToolsetPresetBuilder) {
+    if name.trim().eq_ignore_ascii_case("codex") && !xai_grok_config::CODEX_COMPAT_ENABLED {
+        return;
+    }
     toolset_preset_registry()
         .lock()
         .expect("toolset preset registry poisoned")
@@ -221,7 +245,6 @@ fn native_toolset_presets() -> Vec<(&'static str, ToolServerConfig)> {
         ("grok-build", workspace_grok_build_toolset()),
         ("grok-build-concise", grok_build_concise_toolset()),
         ("grok-build-plan", grok_build_plan_toolset()),
-        ("codex", codex_toolset()),
         ("explore", explore_toolset()),
         ("plan", plan_toolset()),
         ("grok-computer", grok_computer_toolset()),
@@ -254,6 +277,9 @@ pub fn preset_names() -> Vec<String> {
 /// Resolve a named toolset preset to its [`ToolServerConfig`], or `None` if unknown.
 pub fn toolset_for_preset(preset: &str) -> Option<ToolServerConfig> {
     let normalized = preset.trim().to_ascii_lowercase().replace([' ', '_'], "-");
+    if normalized == "codex" && !xai_grok_config::CODEX_COMPAT_ENABLED {
+        return None;
+    }
     native_toolset_presets()
         .into_iter()
         .find(|(name, _)| *name == normalized)
@@ -332,23 +358,6 @@ pub fn grok_build_hashline_toolset(
     ]);
     ToolServerConfig {
         tools,
-        behavior_preset: None,
-    }
-}
-fn codex_toolset() -> ToolServerConfig {
-    ToolServerConfig {
-        tools: vec![
-            bash_tool_config(),
-            (&codex::CodexReadFileTool).into(),
-            (&codex::ApplyPatchTool).into(),
-            (&codex::CodexListDirTool).into(),
-            (&codex::CodexGrepFilesTool).into(),
-            kill_task_tool_config(),
-            (&grok_build::TodoWriteTool).into(),
-            task_output_tool_config(),
-            (&search_tool::SearchTool).into(),
-            (&use_tool::UseTool).into(),
-        ],
         behavior_preset: None,
     }
 }
@@ -660,7 +669,6 @@ pub enum BuiltinAgentName {
     GrokBuildPlan,
     GrokBuildPlanNoSubagents,
     GrokBuildAskUser,
-    Codex,
     Opencode,
     GeneralPurpose,
     Explore,
@@ -689,7 +697,6 @@ impl BuiltinAgentName {
             Self::GrokBuildPlan => AgentDefinition::grok_build_plan(),
             Self::GrokBuildPlanNoSubagents => AgentDefinition::grok_build_plan_no_subagents(),
             Self::GrokBuildAskUser => AgentDefinition::grok_build_ask_user(),
-            Self::Codex => AgentDefinition::codex(),
             Self::Opencode => AgentDefinition::opencode(),
             Self::GeneralPurpose => AgentDefinition::general_purpose(),
             Self::Explore => AgentDefinition::explore(),
@@ -1248,6 +1255,15 @@ impl AgentDefinition {
     /// ```
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, AgentBuildError> {
         let path = path.as_ref();
+        if xai_grok_config::validate_grok_path(path).is_none() {
+            return Err(AgentBuildError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing agent definition under Claude/Codex vendor state: {}",
+                    path.display()
+                ),
+            )));
+        }
         let content = std::fs::read_to_string(path).map_err(AgentBuildError::IoError)?;
         let mut def = Self::parse(&content)?;
         def.source_path = Some(path.to_path_buf());
@@ -1258,6 +1274,15 @@ impl AgentDefinition {
     /// Parse only YAML frontmatter from an agent file, leaving prompt_body unset.
     pub fn from_file_frontmatter_only(path: impl AsRef<Path>) -> Result<Self, AgentBuildError> {
         let path = path.as_ref();
+        if xai_grok_config::validate_grok_path(path).is_none() {
+            return Err(AgentBuildError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing agent definition under Claude/Codex vendor state: {}",
+                    path.display()
+                ),
+            )));
+        }
         let content = std::fs::read_to_string(path).map_err(AgentBuildError::IoError)?;
         let trimmed = content.trim_start();
         if !trimmed.starts_with("---") {
@@ -1272,6 +1297,7 @@ impl AgentDefinition {
         let yaml_content = &after_opening[..closing_idx];
         let mut def: AgentDefinition = serde_yaml::from_str(yaml_content)
             .map_err(|e| AgentBuildError::ParseError(e.to_string()))?;
+        ensure_agent_name_is_build_enabled(&def.name)?;
         def.prompt_body = None;
         def.system_prompt = TemplateOverride::None;
         def.source_path = Some(path.to_path_buf());
@@ -1302,6 +1328,7 @@ impl AgentDefinition {
         };
         let mut def: AgentDefinition = serde_yaml::from_str(yaml_content)
             .map_err(|e| AgentBuildError::ParseError(e.to_string()))?;
+        ensure_agent_name_is_build_enabled(&def.name)?;
         def.prompt_body = prompt_body;
         def.plugin_name = None;
         Ok(def)
@@ -1505,13 +1532,6 @@ impl AgentDefinition {
             )
         }
     }
-    pub fn codex() -> Self {
-        Self {
-            tool_config: codex_toolset(),
-            system_prompt: TemplateOverride::Codex,
-            ..Self::base(BuiltinAgentName::Codex, "Codex toolset and prompt")
-        }
-    }
     pub fn opencode() -> Self {
         Self {
             tool_config: opencode_toolset(),
@@ -1609,6 +1629,7 @@ impl AgentDefinition {
     pub fn from_json(value: &serde_json::Value) -> Result<Self, AgentBuildError> {
         let mut def: AgentDefinition = serde_json::from_value(value.clone())
             .map_err(|e| AgentBuildError::ParseError(e.to_string()))?;
+        ensure_agent_name_is_build_enabled(&def.name)?;
         if let Some(body) = value.get("promptBody").and_then(|v| v.as_str()) {
             let trimmed = body.trim();
             if !trimmed.is_empty() {
@@ -1642,7 +1663,6 @@ mod tests {
             "grok_build",
             "grok-build-concise",
             "grok-build-plan",
-            "codex",
             "explore",
             "plan",
             "grok-computer",
@@ -1653,6 +1673,10 @@ mod tests {
                 "preset `{name}` should resolve"
             );
         }
+        assert!(
+            toolset_for_preset("codex").is_none(),
+            "Codex compatibility preset must be build-disabled"
+        );
         assert!(toolset_for_preset("does-not-exist").is_none());
     }
     #[test]
@@ -1770,7 +1794,7 @@ mod tests {
     /// until classified.
     fn expected_strict_harness(name: BuiltinAgentName) -> bool {
         match name {
-            BuiltinAgentName::Codex | BuiltinAgentName::GrokBuildOrchestrator => true,
+            BuiltinAgentName::GrokBuildOrchestrator => true,
             BuiltinAgentName::GrokBuild
             | BuiltinAgentName::GrokBuildConcise
             | BuiltinAgentName::GrokBuildPlan
@@ -1801,7 +1825,7 @@ mod tests {
     }
     #[test]
     fn is_strict_harness_agent_type_classifies_by_name() {
-        for strict in ["codex", "grok-build-orchestrator"] {
+        for strict in ["grok-build-orchestrator"] {
             assert!(
                 is_strict_harness_agent_type(strict),
                 "{strict} should be strict"
@@ -1817,6 +1841,7 @@ mod tests {
             "custom-user-agent",
             "",
             "grok-build-totally-made-up",
+            "codex",
         ] {
             assert!(
                 !is_strict_harness_agent_type(non_strict),
@@ -2259,6 +2284,59 @@ description: Test default tool config
         assert!(def.prompt_body.is_none());
         assert_eq!(def.scope, AgentScope::BuiltIn);
     }
+
+    #[test]
+    fn build_disabled_codex_name_is_rejected_by_every_definition_parser() {
+        let markdown = "---\nname: ' CoDeX '\ndescription: reserved\n---\nbody\n";
+        let parse_error = AgentDefinition::parse(markdown).unwrap_err();
+        assert!(
+            parse_error
+                .to_string()
+                .contains("reserved and build-disabled")
+        );
+
+        let json = serde_json::json!({ "name": "CODEX", "description": "reserved" });
+        let json_error = AgentDefinition::from_json(&json).unwrap_err();
+        assert!(
+            json_error
+                .to_string()
+                .contains("reserved and build-disabled")
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("reserved.md");
+        std::fs::write(&path, markdown).unwrap();
+        let file_error = AgentDefinition::from_file(&path).unwrap_err();
+        assert!(
+            file_error
+                .to_string()
+                .contains("reserved and build-disabled")
+        );
+        let frontmatter_error = AgentDefinition::from_file_frontmatter_only(&path).unwrap_err();
+        assert!(
+            frontmatter_error
+                .to_string()
+                .contains("reserved and build-disabled")
+        );
+    }
+
+    #[test]
+    fn codex_substring_agent_name_remains_valid() {
+        let markdown = "---\nname: codex-helper\ndescription: ordinary helper\n---\n";
+        assert_eq!(
+            AgentDefinition::parse(markdown).unwrap().name,
+            "codex-helper"
+        );
+        let json = serde_json::json!({
+            "name": "codex-helper",
+            "description": "ordinary helper"
+        });
+        assert_eq!(
+            AgentDefinition::from_json(&json).unwrap().name,
+            "codex-helper"
+        );
+    }
+
     #[test]
     fn test_from_json_has_default_toolset_with_task_tool() {
         let json = serde_json::json!(
@@ -2419,7 +2497,6 @@ description: Test default tool config
             ("grok-build", BuiltinAgentName::GrokBuild),
             ("grok-build-concise", BuiltinAgentName::GrokBuildConcise),
             ("grok-build-ask-user", BuiltinAgentName::GrokBuildAskUser),
-            ("codex", BuiltinAgentName::Codex),
             ("opencode", BuiltinAgentName::Opencode),
             ("general-purpose", BuiltinAgentName::GeneralPurpose),
             ("explore", BuiltinAgentName::Explore),
@@ -2533,7 +2610,6 @@ description: Test default tool config
     fn carries_discipline_false_for_every_template_and_audience() {
         for tpl in [
             crate::prompt::context::TemplateOverride::None,
-            crate::prompt::context::TemplateOverride::Codex,
             crate::prompt::context::TemplateOverride::Custom("fake".to_string()),
         ] {
             let def = def_with_template(tpl.clone());
@@ -2548,5 +2624,42 @@ description: Test default tool config
                 );
             }
         }
+    }
+
+    #[test]
+    fn agent_definition_file_rejects_literal_vendor_state_and_allows_grok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_dir = tmp.path().join(".claude");
+        let grok_dir = tmp.path().join(".grok").join("agents");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        std::fs::create_dir_all(&grok_dir).unwrap();
+        let body = "---\nname: test\ndescription: test\n---\n";
+        let vendor_file = vendor_dir.join("profile.md");
+        let grok_file = grok_dir.join("profile.md");
+        std::fs::write(&vendor_file, body).unwrap();
+        std::fs::write(&grok_file, body).unwrap();
+
+        let error = AgentDefinition::from_file(&vendor_file).unwrap_err();
+        assert!(error.to_string().contains("refusing agent definition"));
+        assert!(AgentDefinition::from_file(&grok_file).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_definition_file_rejects_symlink_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_dir = tmp.path().join(".codex");
+        let grok_dir = tmp.path().join(".grok").join("agents");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        std::fs::create_dir_all(&grok_dir).unwrap();
+        let target = vendor_dir.join("profile.md");
+        std::fs::write(&target, "---\nname: test\ndescription: test\n---\n").unwrap();
+        let alias = grok_dir.join("profile.md");
+        symlink(&target, &alias).unwrap();
+
+        let error = AgentDefinition::from_file(&alias).unwrap_err();
+        assert!(error.to_string().contains("refusing agent definition"));
     }
 }

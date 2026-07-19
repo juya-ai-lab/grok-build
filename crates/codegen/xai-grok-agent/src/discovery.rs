@@ -1,8 +1,7 @@
 //! Agent definition file discovery.
 //!
-//! Searches `.grok/agents/` and `.claude/agents/` from cwd to repo root,
-//! then `~/.grok/agents/`, then `~/.claude/agents/`. Name-based dedup keeps
-//! highest priority.
+//! Searches `.grok/agents/` from cwd to repo root, then user and bundled
+//! `.grok` agent directories. Name-based dedup keeps highest priority.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -10,15 +9,29 @@ use std::str::FromStr;
 
 use xai_grok_tools::types::config_source::ConfigSource;
 
-use crate::config::{AgentDefinition, AgentScope, BuiltinAgentName};
+use crate::config::{AgentDefinition, AgentScope, BuiltinAgentName, is_build_disabled_agent_name};
 use crate::error::AgentBuildError;
 use crate::prompt::context::TemplateOverride;
 
-/// Project-level agent directories to scan (`.grok/agents/` + `.claude/agents/` compat).
-const PROJECT_AGENT_SUBDIRS: &[&str] = &[".grok/agents", ".claude/agents"];
+/// Project-level agent directory to scan.
+const PROJECT_AGENT_SUBDIRS: &[&str] = &[".grok/agents"];
 
-/// Existing project-level agent dirs (`.grok/agents` / `.claude/agents`), walked
-/// from `cwd` up to the git worktree root (inclusive). Returns
+/// Reject agent config sources that lexically or canonically resolve into
+/// Claude/Codex-owned state. This must run before any `is_file`, `is_dir`, or
+/// `read_dir` probe so a symlinked `.grok/agents` tree cannot leak metadata.
+fn is_allowed_agent_path(path: &Path) -> bool {
+    let allowed = xai_grok_config::validate_grok_path(path).is_some();
+    if !allowed {
+        tracing::warn!(
+            path = %path.display(),
+            "refusing agent definition source under Claude/Codex vendor state"
+        );
+    }
+    allowed
+}
+
+/// Existing project-level `.grok/agents` dirs, walked from `cwd` up to the git
+/// worktree root (inclusive). Returns
 /// `(existing dirs, git_root)`. Mirrors [`crate::plugins::project_plugin_dirs`].
 pub fn project_agent_dirs(cwd: Option<&Path>) -> (Vec<PathBuf>, Option<PathBuf>) {
     let Some(cwd) = cwd else {
@@ -28,15 +41,24 @@ pub fn project_agent_dirs(cwd: Option<&Path>) -> (Vec<PathBuf>, Option<PathBuf>)
     (project_agent_dirs_in(&chain.dirs), chain.git_root)
 }
 
-/// Existing project agent dirs (`.grok/agents` / `.claude/agents`) under each
-/// dir of a precomputed cwd→git-root chain ([`crate::repo::RepoDirChain`]).
+/// Existing project `.grok/agents` dirs under each dir of a precomputed
+/// cwd→git-root chain ([`crate::repo::RepoDirChain`]).
 ///
 /// Single source of the `PROJECT_AGENT_SUBDIRS` walk: the folder-trust detector
 /// (`repo_configs_present`) reuses its one shared chain here so detection can
 /// never drift from discovery (adding a third project-agent dir updates both at
 /// once).
 pub fn project_agent_dirs_in(chain_dirs: &[PathBuf]) -> Vec<PathBuf> {
-    crate::repo::existing_subdirs_along(chain_dirs, PROJECT_AGENT_SUBDIRS)
+    let mut found = Vec::new();
+    for dir in chain_dirs {
+        for subdir in PROJECT_AGENT_SUBDIRS {
+            let candidate = dir.join(subdir);
+            if is_allowed_agent_path(&candidate) && candidate.is_dir() {
+                found.push(candidate);
+            }
+        }
+    }
+    found
 }
 
 // ── Subagent entry types ─────────────────────────────────────────────
@@ -127,6 +149,9 @@ fn merge_subagents(
     // at spawn time, so it must not shadow it in the visible list either.
     // Otherwise: visible != callable (the guarantee would be broken).
     for def in discovered {
+        if is_build_disabled_agent_name(&def.name) {
+            continue;
+        }
         if def.scope == AgentScope::BuiltIn {
             continue;
         }
@@ -185,14 +210,12 @@ fn merge_subagents(
 /// Search order (highest priority first):
 /// 1. `.grok/agents/` walking from `cwd` up to repo root
 /// 2. `~/.grok/agents/` (user-level)
-/// 3. `~/.claude/agents/` (compat user-level)
-/// 4. `~/.grok/bundled/agents/` (bundled, lowest priority)
+/// 3. `~/.grok/bundled/agents/` (bundled, lowest priority)
 ///
 /// Deduplicates by name — higher-priority definitions win.
-/// User-level agent directories in priority order: user grok agents, `.claude`
-/// compat agents, then bundled. `.grok` dirs resolve from `grok_home`
-/// (GROK_HOME-aware) plus the legacy literal `~/.grok` when GROK_HOME points
-/// elsewhere; `.claude` resolves from `home`.
+/// User-level agent directories in priority order: user Grok agents, then
+/// bundled agents. Directories resolve from `grok_home` (GROK_HOME-aware) plus
+/// the legacy literal `~/.grok` when GROK_HOME points elsewhere.
 pub(crate) fn user_agent_dirs(
     home: Option<&Path>,
     grok_home: Option<&Path>,
@@ -210,9 +233,6 @@ pub(crate) fn user_agent_dirs(
     }
     if let Some(l) = &legacy_grok {
         dirs.push((l.join("agents"), AgentScope::User));
-    }
-    if let Some(h) = home {
-        dirs.push((h.join(".claude").join("agents"), AgentScope::User));
     }
     if let Some(g) = grok_home {
         dirs.push((g.join("bundled").join("agents"), AgentScope::Bundled));
@@ -239,7 +259,7 @@ fn discover_with_home(
     load_project_definitions(cwd, &mut definitions, &mut seen_names);
 
     for (dir, scope) in user_agent_dirs(home, grok_home) {
-        if dir.is_dir() {
+        if is_allowed_agent_path(&dir) && dir.is_dir() {
             load_definitions_from_dir(&dir, scope, &mut definitions, &mut seen_names);
         }
     }
@@ -251,6 +271,9 @@ fn discover_with_home(
 ///
 /// Checks built-ins first, then user-level dirs, then bundled.
 pub fn by_name(name: &str) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name) {
+        return None;
+    }
     let grok = xai_grok_config::user_grok_home();
     by_name_with_home(name, dirs::home_dir().as_deref(), grok.as_deref())
 }
@@ -260,6 +283,13 @@ fn by_name_with_home(
     home: Option<&Path>,
     grok_home: Option<&Path>,
 ) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name)
+        || name
+            .split_once(':')
+            .is_some_and(|(_, agent_name)| is_build_disabled_agent_name(agent_name))
+    {
+        return None;
+    }
     // Check built-ins first — type-safe via BuiltinAgentName strum enum
     if let Ok(builtin) = BuiltinAgentName::from_str(name) {
         return Some(builtin.definition());
@@ -287,6 +317,9 @@ fn by_name_with_home(
 /// Project-level `.grok/agents/` has highest priority, then falls back
 /// to built-ins, user-level, and finally bundled definitions.
 pub fn by_name_in_cwd(name: &str, cwd: &Path) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name) {
+        return None;
+    }
     let grok = xai_grok_config::user_grok_home();
     by_name_in_cwd_with_home(name, cwd, dirs::home_dir().as_deref(), grok.as_deref())
 }
@@ -297,6 +330,9 @@ fn by_name_in_cwd_with_home(
     home: Option<&Path>,
     grok_home: Option<&Path>,
 ) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name) {
+        return None;
+    }
     if let Some(def) = load_project_definition_by_name(name, cwd) {
         return Some(def);
     }
@@ -387,7 +423,7 @@ fn all_subagents_with_plugins_and_home(
     if let Some(registry) = plugins {
         for plugin in registry.enabled_plugins() {
             for agent_dir in &plugin.agent_dirs {
-                if !agent_dir.is_dir() {
+                if !is_allowed_agent_path(agent_dir) || !agent_dir.is_dir() {
                     continue;
                 }
                 let agent_entries = match std::fs::read_dir(agent_dir) {
@@ -396,7 +432,9 @@ fn all_subagents_with_plugins_and_home(
                 };
                 for entry in agent_entries.flatten() {
                     let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    if !is_allowed_agent_path(&path)
+                        || path.extension().and_then(|e| e.to_str()) != Some("md")
+                    {
                         continue;
                     }
                     // Use frontmatter-only parsing for untrusted plugins
@@ -450,6 +488,13 @@ pub fn by_name_in_cwd_with_plugins(
     cwd: &Path,
     plugins: Option<&crate::plugins::PluginRegistry>,
 ) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name)
+        || name
+            .split_once(':')
+            .is_some_and(|(_, agent_name)| is_build_disabled_agent_name(agent_name))
+    {
+        return None;
+    }
     let grok = xai_grok_config::user_grok_home();
     by_name_in_cwd_with_plugins_and_home(
         name,
@@ -467,6 +512,13 @@ fn by_name_in_cwd_with_plugins_and_home(
     home: Option<&Path>,
     grok_home: Option<&Path>,
 ) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name)
+        || name
+            .split_once(':')
+            .is_some_and(|(_, agent_name)| is_build_disabled_agent_name(agent_name))
+    {
+        return None;
+    }
     // First try native resolution (project > built-in > user > bundled)
     if let Some(def) = by_name_in_cwd_with_home(name, cwd, home, grok_home) {
         return Some(def);
@@ -481,7 +533,7 @@ fn by_name_in_cwd_with_plugins_and_home(
         {
             for agent_dir in &plugin.agent_dirs {
                 let agent_file = agent_dir.join(format!("{agent_name}.md"));
-                if agent_file.is_file() {
+                if is_allowed_agent_path(&agent_file) && agent_file.is_file() {
                     let load_fn = if plugin.trusted {
                         AgentDefinition::from_file
                     } else {
@@ -503,7 +555,7 @@ fn by_name_in_cwd_with_plugins_and_home(
         for plugin in registry.enabled_plugins() {
             for agent_dir in &plugin.agent_dirs {
                 let agent_file = agent_dir.join(format!("{name}.md"));
-                if agent_file.is_file() {
+                if is_allowed_agent_path(&agent_file) && agent_file.is_file() {
                     matches.push((plugin, agent_file));
                 }
             }
@@ -557,8 +609,8 @@ fn substitute_plugin_vars(def: &mut AgentDefinition, plugin: &crate::plugins::Lo
     }
 }
 
-/// Load project agent definitions from every `.grok/agents` / `.claude/agents`
-/// dir along the cwd→git-root walk, via the shared [`project_agent_dirs`] SSOT.
+/// Load project agent definitions from every `.grok/agents` dir along the
+/// cwd→git-root walk, via the shared [`project_agent_dirs`] SSOT.
 fn load_project_definitions(
     cwd: &Path,
     definitions: &mut Vec<AgentDefinition>,
@@ -572,6 +624,9 @@ fn load_project_definitions(
 /// First project agent named `name` along the cwd→git-root walk (the shared
 /// [`project_agent_dirs`] SSOT), highest-priority dir first.
 fn load_project_definition_by_name(name: &str, cwd: &Path) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name) {
+        return None;
+    }
     for agents_dir in project_agent_dirs(Some(cwd)).0 {
         let agent_file = agents_dir.join(format!("{name}.md"));
         if let Some(def) = load_definition_from_path(
@@ -592,6 +647,9 @@ fn load_definition_by_name(
     error_message: &str,
     scope_override: Option<AgentScope>,
 ) -> Option<AgentDefinition> {
+    if is_build_disabled_agent_name(name) {
+        return None;
+    }
     let agent_file = dir.join(format!("{}.md", name));
     load_definition_from_path(&agent_file, name, error_message, scope_override)
 }
@@ -602,7 +660,10 @@ fn load_definition_from_path(
     error_message: &str,
     scope_override: Option<AgentScope>,
 ) -> Option<AgentDefinition> {
-    if !agent_file.is_file() {
+    if is_build_disabled_agent_name(name) {
+        return None;
+    }
+    if !is_allowed_agent_path(agent_file) || !agent_file.is_file() {
         return None;
     }
 
@@ -632,6 +693,9 @@ fn load_definitions_from_dir(
     definitions: &mut Vec<AgentDefinition>,
     seen_names: &mut std::collections::HashSet<String>,
 ) {
+    if !is_allowed_agent_path(dir) {
+        return;
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return,
@@ -639,7 +703,8 @@ fn load_definitions_from_dir(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+        if !is_allowed_agent_path(&path) || path.extension().and_then(|e| e.to_str()) != Some("md")
+        {
             continue;
         }
 
@@ -772,7 +837,7 @@ mod tests {
             .collect();
         assert!(paths.contains(&grok.join("agents")));
         assert!(paths.contains(&home.join(".grok").join("agents")));
-        assert!(paths.contains(&home.join(".claude").join("agents")));
+        assert!(!paths.iter().any(|p| p.starts_with(home.join(".claude"))));
         assert!(paths.contains(&grok.join("bundled").join("agents")));
         assert!(paths.contains(&home.join(".grok").join("bundled").join("agents")));
     }
@@ -814,10 +879,78 @@ mod tests {
     }
 
     #[test]
-    fn test_by_name_builtin_codex() {
-        let def = by_name("codex");
-        assert!(def.is_some());
-        assert_eq!(def.unwrap().name, "codex");
+    fn test_by_name_does_not_expose_codex_compat_profile() {
+        assert!(!xai_grok_config::CODEX_COMPAT_ENABLED);
+        assert!(by_name("codex").is_none());
+    }
+
+    #[test]
+    fn project_discovery_reserves_exact_codex_name_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agents_dir = tmp.path().join(".grok").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        write_agent_file(&agents_dir, "codex.md", "codex", "reserved");
+        write_agent_file(
+            &agents_dir,
+            "codex-helper.md",
+            "codex-helper",
+            "ordinary helper",
+        );
+
+        assert!(
+            by_name_in_cwd_with_home("codex", tmp.path(), None, None).is_none(),
+            "the reserved name must be rejected before project lookup"
+        );
+        assert_eq!(
+            by_name_in_cwd_with_home("codex-helper", tmp.path(), None, None)
+                .unwrap()
+                .name,
+            "codex-helper"
+        );
+        let names: Vec<_> = discover_with_home(tmp.path(), None, None)
+            .into_iter()
+            .map(|def| def.name)
+            .collect();
+        assert!(!names.iter().any(|name| name.eq_ignore_ascii_case("codex")));
+        assert!(names.iter().any(|name| name == "codex-helper"));
+    }
+
+    #[test]
+    fn plugin_discovery_reserves_exact_codex_agent_name_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agent_dir = tmp.path().join("agents");
+        fs::create_dir_all(&agent_dir).unwrap();
+        write_agent_file(&agent_dir, "codex.md", "codex", "reserved");
+        write_agent_file(
+            &agent_dir,
+            "codex-helper.md",
+            "codex-helper",
+            "ordinary helper",
+        );
+        let registry = make_plugin_registry("demo", PluginScope::User, vec![agent_dir]);
+
+        assert!(
+            by_name_in_cwd_with_plugins_and_home(
+                "demo:codex",
+                tmp.path(),
+                Some(&registry),
+                None,
+                None,
+            )
+            .is_none()
+        );
+        assert_eq!(
+            by_name_in_cwd_with_plugins_and_home(
+                "demo:codex-helper",
+                tmp.path(),
+                Some(&registry),
+                None,
+                None,
+            )
+            .unwrap()
+            .name,
+            "codex-helper"
+        );
     }
 
     #[test]
@@ -840,6 +973,31 @@ mod tests {
         let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"test-agent"));
         assert!(names.contains(&"another"));
+    }
+
+    #[test]
+    fn test_discover_ignores_project_and_user_claude_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("workspace");
+        let home = tmp.path().join("home");
+        let project_agents = cwd.join(".claude").join("agents");
+        let user_agents = home.join(".claude").join("agents");
+        fs::create_dir_all(&project_agents).unwrap();
+        fs::create_dir_all(&user_agents).unwrap();
+        write_agent_file(
+            &project_agents,
+            "project-claude.md",
+            "project-claude",
+            "ignored project agent",
+        );
+        write_agent_file(
+            &user_agents,
+            "user-claude.md",
+            "user-claude",
+            "ignored user agent",
+        );
+
+        assert!(discover_with_home(&cwd, Some(&home), None).is_empty());
     }
 
     #[test]
@@ -1497,5 +1655,22 @@ mod tests {
         let entries = all_subagents_with_home(tmp.path(), &toggle, None, None);
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["general-purpose", "explore", "plan"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_agent_dir_symlink_into_vendor_state_is_not_probed() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        let vendor_agents = project.join(".agents").join("agents");
+        fs::create_dir_all(project.join(".grok")).unwrap();
+        fs::create_dir_all(&vendor_agents).unwrap();
+        write_agent_file(&vendor_agents, "hidden.md", "hidden", "must stay hidden");
+        symlink(&vendor_agents, project.join(".grok").join("agents")).unwrap();
+
+        assert!(project_agent_dirs(Some(&project)).0.is_empty());
+        assert!(discover_with_home(&project, None, None).is_empty());
     }
 }

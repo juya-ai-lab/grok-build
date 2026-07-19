@@ -100,30 +100,36 @@ fn quit_returns_quit_effect() {
     assert!(matches!(effects.as_slice(), [Effect::Quit]));
 }
 #[test]
-fn resume_foreign_session_consumes_hint_and_uses_each_tools_prompt() {
+fn resume_foreign_session_consumes_cursor_hint() {
     use xai_grok_workspace::foreign_sessions::ForeignSessionTool;
-    for (tool, prompt) in [
-        (ForeignSessionTool::Claude, "/resume-claude native-id"),
-        (ForeignSessionTool::Codex, "/resume-codex native-id"),
-        (ForeignSessionTool::Cursor, "/resume-cursor native-id"),
-    ] {
+    let mut app = test_app();
+    seed_foreign_resume_hint(&mut app, ForeignSessionTool::Cursor);
+    let effects = dispatch(Action::ResumeForeignSession, &mut app);
+    assert!(app.foreign_resume_hint().is_none());
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::CreateSession { .. }))
+    );
+    assert_eq!(
+        app.agents[&AgentId(0)]
+            .session
+            .pending_prompts
+            .front()
+            .map(|pending| pending.text.as_str()),
+        Some("/resume-cursor native-id")
+    );
+}
+
+#[test]
+fn resume_foreign_session_rejects_disabled_vendor_hints() {
+    use xai_grok_workspace::foreign_sessions::ForeignSessionTool;
+    for tool in [ForeignSessionTool::Claude, ForeignSessionTool::Codex] {
         let mut app = test_app();
         seed_foreign_resume_hint(&mut app, tool);
-        let effects = dispatch(Action::ResumeForeignSession, &mut app);
         assert!(app.foreign_resume_hint().is_none());
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::CreateSession { .. }))
-        );
-        assert_eq!(
-            app.agents[&AgentId(0)]
-                .session
-                .pending_prompts
-                .front()
-                .map(|pending| pending.text.as_str()),
-            Some(prompt)
-        );
+        assert!(dispatch(Action::ResumeForeignSession, &mut app).is_empty());
+        assert!(app.agents.is_empty());
     }
 }
 #[test]
@@ -137,10 +143,7 @@ fn resume_foreign_session_without_hint_is_noop() {
 #[test]
 fn resume_foreign_session_stashes_prompt_behind_trust_and_auth() {
     use xai_grok_workspace::foreign_sessions::ForeignSessionTool;
-    for (tool, prompt, auth_pending) in [
-        (ForeignSessionTool::Codex, "/resume-codex native-id", false),
-        (ForeignSessionTool::Cursor, "/resume-cursor native-id", true),
-    ] {
+    for auth_pending in [false, true] {
         let mut app = test_app();
         if auth_pending {
             app.auth_state = AuthState::Pending { error: None };
@@ -149,7 +152,7 @@ fn resume_foreign_session_stashes_prompt_behind_trust_and_auth() {
                 workspace: std::path::PathBuf::from("/work/proj"),
             };
         }
-        seed_foreign_resume_hint(&mut app, tool);
+        seed_foreign_resume_hint(&mut app, ForeignSessionTool::Cursor);
         app.deferred_startup.session =
             Some(crate::app::session_startup::DeferredSessionStartup::Load {
                 session_id: "must-not-load".into(),
@@ -171,7 +174,10 @@ fn resume_foreign_session_stashes_prompt_behind_trust_and_auth() {
         let effects = dispatch(Action::ResumeForeignSession, &mut app);
         assert!(effects.is_empty());
         assert!(app.foreign_resume_hint().is_none());
-        assert_eq!(app.deferred_startup.prompt.as_deref(), Some(prompt));
+        assert_eq!(
+            app.deferred_startup.prompt.as_deref(),
+            Some("/resume-cursor native-id")
+        );
         assert!(app.deferred_startup.session.is_none());
         assert!(!app.deferred_startup.worktree);
         assert!(app.deferred_startup.worktree_label.is_none());

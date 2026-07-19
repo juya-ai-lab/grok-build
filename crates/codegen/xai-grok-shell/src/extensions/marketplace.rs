@@ -786,6 +786,20 @@ async fn handle_add_source(url: &str) -> xai_hooks_plugins_types::ActionOutcome 
     let cwd = std::env::current_dir().unwrap_or_default();
     let input = plugin::classify_marketplace_add_input(url, &cwd);
 
+    if let MarketplaceAddInput::LocalPath(path) = &input
+        && xai_grok_config::validate_grok_path(path).is_none()
+    {
+        return ActionOutcome {
+            status: OutcomeStatus::ValidationError,
+            message: format!(
+                "Refusing local marketplace under Claude/Codex vendor state: {}",
+                path.display()
+            ),
+            requires_reload: false,
+            requires_restart: false,
+        };
+    }
+
     // Fail fast on missing local paths: without this, a path input would be
     // stored as a git URL and only error after network clone attempts.
     if let MarketplaceAddInput::LocalPath(path) = &input

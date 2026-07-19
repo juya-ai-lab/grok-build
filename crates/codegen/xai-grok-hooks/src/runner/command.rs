@@ -149,15 +149,29 @@ pub async fn run_command_hook(
     // (DETACHED_PROCESS is intentionally omitted — it breaks stdio inheritance).
     xai_grok_tools::util::detach_command(&mut cmd);
 
+    // Strip inherited vendor environment signals before spawning.
+    // The filtered extra-env iterator below prevents hook-local config from
+    // adding them back.
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_str()
+            .is_some_and(crate::env_expand::is_disabled_vendor_env)
+        {
+            cmd.env_remove(name);
+        }
+    }
+    let safe_extra_env = spec
+        .extra_env
+        .iter()
+        .filter(|(name, _)| !crate::env_expand::is_disabled_vendor_env(name));
+
     // Spawn the child process.
     //
     // SECURITY: env-var precedence at spawn time. `Command::envs(&map)` runs
     // AFTER any preceding `.env(...)` calls and silently overrides them, so
     // the order matters: we MUST apply user/plugin `extra_env` FIRST and
     // the runner-injected vars LAST. Otherwise a user JSON hook (or a
-    // plugin) can spoof `GROK_HOOK_EVENT`, `GROK_HOOK_NAME`, `GROK_SESSION_ID`,
-    // `GROK_WORKSPACE_ROOT`, or `CLAUDE_PROJECT_DIR` -- which are the
-    // identity/event signals a hook script consumes for policy and audit.
+    // plugin) can spoof Grok's identity/event signals consumed by hook scripts.
     // See the `runner_injected_vars_override_extra_env_at_spawn`
     // regression test in `tests/integration.rs` and the rustdoc on
     // `HookSpec::extra_env`.
@@ -167,16 +181,12 @@ pub async fn run_command_hook(
         .stderr(std::process::Stdio::piped())
         .current_dir(ctx.workspace_root)
         // 1. user/plugin extra_env first (lowest precedence).
-        .envs(&spec.extra_env)
+        .envs(safe_extra_env)
         // 2. runner-injected vars last (highest precedence -- always win).
         .env("GROK_HOOK_EVENT", envelope.hook_event_name.to_string())
         .env("GROK_HOOK_NAME", &spec.name)
         .env("GROK_SESSION_ID", ctx.session_id)
         .env("GROK_WORKSPACE_ROOT", ctx.workspace_root)
-        // Compatibility alias for external hooks that read this env name.
-        // Same value as `GROK_WORKSPACE_ROOT`; native `.grok` hooks should use
-        // `GROK_WORKSPACE_ROOT`.
-        .env("CLAUDE_PROJECT_DIR", ctx.workspace_root)
         .kill_on_drop(true)
         .spawn()
     {
@@ -278,7 +288,6 @@ pub(crate) const RUNNER_ALWAYS_SET_ENV: &[&str] = &[
     "GROK_HOOK_NAME",
     "GROK_SESSION_ID",
     "GROK_WORKSPACE_ROOT",
-    "CLAUDE_PROJECT_DIR",
 ];
 
 /// Parse `command_str` for `${VAR}` and `$VAR` references and return the
@@ -316,6 +325,10 @@ fn find_unresolved_env_vars(
             continue;
         }
         if RUNNER_ALWAYS_SET_ENV.contains(&r.name) {
+            continue;
+        }
+        if crate::env_expand::is_disabled_vendor_env(r.name) && !locally_assigned.contains(r.name) {
+            out.push(r.name.to_string());
             continue;
         }
         if extra_env.contains_key(r.name) {
@@ -839,9 +852,9 @@ mod tests {
         assert!("a; b".contains(';')); // semicolon
         assert!("a > out".contains('>')); // redirect
         // Env-var interpolation must also force the sh -c branch so that
-        // commands like `${CLAUDE_PLUGIN_ROOT}/hooks/foo.sh` get expanded
+        // commands like `${GROK_PLUGIN_ROOT}/hooks/foo.sh` get expanded
         // by the shell rather than treated as a literal executable path.
-        assert!("${CLAUDE_PLUGIN_ROOT}/hooks/foo.sh".contains('$'));
+        assert!("${GROK_PLUGIN_ROOT}/hooks/foo.sh".contains('$'));
         assert!("$HOME/bin/hook".contains('$'));
 
         // Tilde at the start must also force the sh -c branch so that
@@ -911,65 +924,71 @@ mod tests {
         );
     }
 
-    /// `CLAUDE_PROJECT_DIR` is part of the external hook contract -- it points
-    /// to the workspace/project root and is set for ALL hooks (not just
-    /// plugin-scoped ones). Plugin hooks frequently reference it as
-    /// `"$CLAUDE_PROJECT_DIR/.claude/hooks/foo.sh"`. The runner must export
-    /// it on the spawned child so shell expansion via the `sh -c` branch
-    /// resolves correctly; otherwise such hooks fail to find the
-    /// command.
-    #[tokio::test]
-    async fn test_claude_project_dir_is_exported() {
-        let tmp = tempfile::tempdir().unwrap();
-        let script = tmp.path().join("hook.sh");
-        // Exit 0 only if CLAUDE_PROJECT_DIR matches the workspace root.
-        let workspace = tmp.path().to_string_lossy().into_owned();
-        std::fs::write(
-            &script,
-            format!(
-                "#!/bin/sh\ntest \"${{CLAUDE_PROJECT_DIR}}\" = \"{workspace}\"\n",
-                workspace = workspace
-            ),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&script).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&script, perms).unwrap();
-        }
+    /// Vendor signals are removed from both the inherited environment and
+    /// hook-local `extra_env`, while unrelated configured variables survive.
+    #[test]
+    #[cfg(unix)]
+    fn test_vendor_env_is_filtered_and_regular_env_is_preserved() {
+        use crate::test_support::with_env_var;
 
-        let spec = HookSpec {
-            name: "test-claude-project-dir".into(),
-            event: crate::event::HookEventName::Stop,
-            handler_type: "command".into(),
-            configured_matcher: None,
-            matcher: None,
-            enabled: true,
-            // Use ${CLAUDE_PROJECT_DIR} in the path itself so this also exercises
-            // the `$` -> sh -c routing.
-            command: Some(std::path::PathBuf::from("${CLAUDE_PROJECT_DIR}/hook.sh")),
-            command_raw: Some("${CLAUDE_PROJECT_DIR}/hook.sh".to_string()),
-            url: None,
-            url_raw: None,
-            timeout_ms: 5000,
-            source_dir: tmp.path().to_path_buf(),
-            extra_env: std::collections::HashMap::new(),
-        };
+        with_env_var("cOdEx_HoMe", Some("/inherited/codex"), || {
+            with_env_var("gRoK_cLaUdE_HOOK_INHERITED_TEST", Some("leak"), || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                runtime.block_on(async {
+                    let tmp = tempfile::tempdir().unwrap();
+                    let script = tmp.path().join("hook.sh");
+                    std::fs::write(
+                        &script,
+                        r#"#!/bin/sh
+test -z "${cOdEx_HoMe+x}" &&
+test -z "${gRoK_cLaUdE_HOOK_INHERITED_TEST+x}" &&
+test -z "${CLAUDE_CONFIG_DIR+x}" &&
+test -z "${cLaUdE_PLUGIN_ROOT+x}" &&
+test -z "${GrOk_CoDeX_CONFIG_PATH+x}" &&
+test "$ORDINARY_HOOK_ENV" = "preserved"
+"#,
+                    )
+                    .unwrap();
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+                    perms.set_mode(0o755);
+                    std::fs::set_permissions(&script, perms).unwrap();
 
-        let envelope = make_envelope();
-        let ctx = RunContext {
-            session_id: "test-session",
-            workspace_root: &workspace,
-        };
-        let (result, _) = run_command_hook(&spec, &envelope, &ctx, false).await;
+                    let spec = HookSpec {
+                        name: "test-vendor-env-filter".into(),
+                        event: crate::event::HookEventName::Stop,
+                        handler_type: "command".into(),
+                        configured_matcher: None,
+                        matcher: None,
+                        enabled: true,
+                        command: Some(script),
+                        command_raw: None,
+                        url: None,
+                        url_raw: None,
+                        timeout_ms: 5000,
+                        source_dir: tmp.path().to_path_buf(),
+                        extra_env: std::collections::HashMap::from([
+                            ("CLAUDE_CONFIG_DIR".into(), "/configured/claude".into()),
+                            ("cLaUdE_PLUGIN_ROOT".into(), "/configured/plugin".into()),
+                            ("GrOk_CoDeX_CONFIG_PATH".into(), "/configured/codex".into()),
+                            ("ORDINARY_HOOK_ENV".into(), "preserved".into()),
+                        ]),
+                    };
 
-        assert!(
-            matches!(result, HookRunnerResult::Success),
-            "hook should see CLAUDE_PROJECT_DIR set to the workspace root, got {:?}",
-            result
-        );
+                    let envelope = make_envelope();
+                    let ctx = make_ctx();
+                    let (result, _) = run_command_hook(&spec, &envelope, &ctx, false).await;
+
+                    assert!(
+                        matches!(result, HookRunnerResult::Success),
+                        "hook received a disabled vendor env or lost a regular env: {result:?}"
+                    );
+                });
+            });
+        });
     }
 
     /// Unit tests for the `find_unresolved_env_vars` parser. We seed
@@ -993,10 +1012,7 @@ mod tests {
     #[test]
     fn find_unresolved_skips_runner_vars() {
         let env = std::collections::HashMap::new();
-        let v = find_unresolved_env_vars(
-            "${GROK_HOOK_EVENT}/${CLAUDE_PROJECT_DIR}/${GROK_SESSION_ID}/foo",
-            &env,
-        );
+        let v = find_unresolved_env_vars("${GROK_HOOK_EVENT}/${GROK_SESSION_ID}/foo", &env);
         assert!(
             v.is_empty(),
             "runner-set vars should never be flagged, got {v:?}"
@@ -1006,11 +1022,30 @@ mod tests {
     #[test]
     fn find_unresolved_skips_extra_env() {
         let mut env = std::collections::HashMap::new();
-        env.insert("CLAUDE_PLUGIN_ROOT".to_string(), "/plugins/foo".to_string());
-        let v = find_unresolved_env_vars("${CLAUDE_PLUGIN_ROOT}/hooks/foo.sh", &env);
+        env.insert("GROK_PLUGIN_ROOT".to_string(), "/plugins/foo".to_string());
+        let v = find_unresolved_env_vars("${GROK_PLUGIN_ROOT}/hooks/foo.sh", &env);
         assert!(
             v.is_empty(),
             "vars present in extra_env should not be flagged, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn find_unresolved_rejects_disabled_vendor_env_case_insensitively() {
+        let env = std::collections::HashMap::from([
+            ("cLaUdE_cOnFiG_dIr".to_string(), "/claude".to_string()),
+            ("GrOk_CoDeX_PLUGIN_ROOT".to_string(), "/codex".to_string()),
+        ]);
+        let v = find_unresolved_env_vars(
+            "${cLaUdE_cOnFiG_dIr}/hooks:$GrOk_CoDeX_PLUGIN_ROOT/foo.sh",
+            &env,
+        );
+        assert_eq!(
+            v,
+            vec![
+                "GrOk_CoDeX_PLUGIN_ROOT".to_string(),
+                "cLaUdE_cOnFiG_dIr".to_string(),
+            ]
         );
     }
 

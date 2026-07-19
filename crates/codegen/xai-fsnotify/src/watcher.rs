@@ -48,6 +48,179 @@ const DEBOUNCE_MS: u64 = 100;
 
 use crate::event::FsEventKind;
 
+/// Foreign/shared state is never part of a Grok workspace watch. This is a
+/// hard boundary, not a user-configurable ignore: custom `!` include globs must
+/// not be able to restore these paths.
+const VENDOR_STATE_DIR_NAMES: [&str; 3] = [".claude", ".codex", ".agents"];
+const CLAUDE_JSON_NAME: &str = ".claude.json";
+
+#[cfg(not(windows))]
+fn os_component_eq(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    left == right
+}
+
+#[cfg(windows)]
+fn os_component_eq(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    left.to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+/// Pure lexical canary used before any canonicalize/stat/read-dir/watch call.
+///
+/// Vendor roots are rejected wherever they occur as a path component. Treat
+/// `.claude.json` the same way even though it is normally a file: a directory
+/// with that name must not become a loophole. Other hidden directories (for
+/// example `.grok`, `.cursor`, and `.config`) remain eligible for normal
+/// watcher behavior.
+fn has_explicit_vendor_state_name(path: &Path) -> bool {
+    path.components().any(|component| {
+        VENDOR_STATE_DIR_NAMES
+            .iter()
+            .any(|blocked| os_component_eq(component.as_os_str(), std::ffi::OsStr::new(blocked)))
+            || os_component_eq(
+                component.as_os_str(),
+                std::ffi::OsStr::new(CLAUDE_JSON_NAME),
+            )
+    })
+}
+
+fn normalize_absolute_lexically(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            _ => out.push(component.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+fn path_is_within(candidate: &Path, root: &Path) -> bool {
+    let mut candidate = candidate.components();
+    for root_component in root.components() {
+        let Some(candidate_component) = candidate.next() else {
+            return false;
+        };
+        if !os_component_eq(candidate_component.as_os_str(), root_component.as_os_str()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Immutable hard-deny policy captured once for a watcher lifetime.
+///
+/// Fixed vendor names never require filesystem I/O. Effective custom roots
+/// from `CODEX_HOME` / `CLAUDE_CONFIG_DIR` are compared lexically as well; when
+/// such a root has an innocuous name, one canonical form is also retained so a
+/// symlink alias cannot enter it. Explicitly named vendor roots are never
+/// canonicalized here because the lexical canary already rejects them.
+#[derive(Clone, Debug, Default)]
+struct VendorPathPolicy {
+    roots: Vec<PathBuf>,
+}
+
+impl VendorPathPolicy {
+    fn from_env() -> Self {
+        Self::from_roots(
+            ["CODEX_HOME", "CLAUDE_CONFIG_DIR"]
+                .into_iter()
+                .filter_map(|name| std::env::var_os(name))
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from),
+        )
+    }
+
+    fn from_roots(roots: impl IntoIterator<Item = PathBuf>) -> Self {
+        let mut resolved = Vec::new();
+        for root in roots {
+            let Some(lexical) = normalize_absolute_lexically(&root) else {
+                continue;
+            };
+            if !resolved.contains(&lexical) {
+                resolved.push(lexical.clone());
+            }
+            if !has_explicit_vendor_state_name(&lexical)
+                && let Ok(canonical) = dunce::canonicalize(&lexical)
+            {
+                let canonical = normalize_absolute_lexically(&canonical).unwrap_or(canonical);
+                if !resolved.contains(&canonical) {
+                    resolved.push(canonical);
+                }
+            }
+        }
+        Self { roots: resolved }
+    }
+
+    /// Hard lexical decision. Callers must invoke this before any operation
+    /// that could touch `path`.
+    fn excludes_lexical(&self, path: &Path) -> bool {
+        if has_explicit_vendor_state_name(path) {
+            return true;
+        }
+        let Some(candidate) = normalize_absolute_lexically(path) else {
+            return true;
+        };
+        self.roots
+            .iter()
+            .any(|root| path_is_within(&candidate, root))
+    }
+}
+
+fn blocked_watch_root(path: &Path) -> crate::FsNotifyError {
+    crate::FsNotifyError::WatcherStart(
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing filesystem watch under vendor state: {}",
+                path.display()
+            ),
+        )
+        .into(),
+    )
+}
+
+/// Validate before canonicalization, then validate the canonical result. The
+/// second pass catches an innocuous symlinked root targeting a custom or fixed
+/// vendor-state directory; the first pass guarantees an explicitly named
+/// vendor path is rejected without touching it.
+pub(crate) fn prepare_watch_root(path: PathBuf) -> Result<PathBuf, crate::FsNotifyError> {
+    // Do this before constructing the environment policy: custom policy roots
+    // may need canonicalization, but an explicitly named vendor root must be
+    // refused before *any* filesystem probe in this call.
+    if has_explicit_vendor_state_name(&path) {
+        return Err(blocked_watch_root(&path));
+    }
+    let policy = VendorPathPolicy::from_env();
+    prepare_watch_root_with_policy(path, &policy)
+}
+
+fn prepare_watch_root_with_policy(
+    path: PathBuf,
+    policy: &VendorPathPolicy,
+) -> Result<PathBuf, crate::FsNotifyError> {
+    if has_explicit_vendor_state_name(&path) || policy.excludes_lexical(&path) {
+        return Err(blocked_watch_root(&path));
+    }
+    let canonical = dunce::canonicalize(&path).unwrap_or(path);
+    if policy.excludes_lexical(&canonical) {
+        return Err(blocked_watch_root(&canonical));
+    }
+    Ok(canonical)
+}
+
 /// Raw OS-level event from the debouncer. Internal; the semantic public
 /// `FsEvent` enum lives in `event.rs`.
 #[derive(Debug, Clone)]
@@ -457,12 +630,19 @@ fn scan_per_dir_updates(
     paths: &[PathBuf],
     pruned: &mut Vec<PathBuf>,
     added: &mut Vec<PathBuf>,
+    vendor_policy: &VendorPathPolicy,
 ) {
     let structural = matches!(
         kind,
         FsEventKind::Created | FsEventKind::Removed | FsEventKind::Renamed
     );
     for p in paths {
+        // Event paths reach here only after callback retain, but keep the
+        // dynamic watch-set boundary local and testable. Crucially this runs
+        // before symlink_metadata.
+        if vendor_policy.excludes_lexical(p) {
+            continue;
+        }
         let is_dir = p.symlink_metadata().is_ok_and(|m| m.file_type().is_dir());
         if is_dir {
             if structural {
@@ -482,19 +662,39 @@ fn scan_per_dir_updates(
 /// ancestor so it can't escape. A `.git` file or symlink is resolved through
 /// `git2`, which rejects a pointer to a non-git target (e.g. a planted
 /// `gitdir: ~/.ssh` or `ln -s ~/.ssh .git`) instead of watching it.
+#[cfg(test)]
 fn find_git_dir(watch_path: &Path) -> Option<PathBuf> {
+    find_git_dir_with_policy(watch_path, &VendorPathPolicy::from_env())
+}
+
+fn find_git_dir_with_policy(
+    watch_path: &Path,
+    vendor_policy: &VendorPathPolicy,
+) -> Option<PathBuf> {
     for ancestor in watch_path.ancestors() {
         let dot_git = ancestor.join(".git");
+        // A custom vendor root is allowed to have an arbitrary basename. The
+        // policy check must therefore precede even the cheap lstat below.
+        if vendor_policy.excludes_lexical(&dot_git) {
+            continue;
+        }
         let Ok(meta) = dot_git.symlink_metadata() else {
             continue;
         };
         if meta.file_type().is_dir() {
-            return Some(dunce::canonicalize(&dot_git).unwrap_or(dot_git));
+            let resolved = dunce::canonicalize(&dot_git).unwrap_or(dot_git);
+            if !vendor_policy.excludes_lexical(&resolved) {
+                return Some(resolved);
+            }
+            continue;
         }
         // A `.git` file or symlink: let git validate the target before watching.
         if let Ok(repo) = git2::Repository::open(ancestor) {
             let gd = repo.path().to_path_buf();
-            return Some(dunce::canonicalize(&gd).unwrap_or(gd));
+            let resolved = dunce::canonicalize(&gd).unwrap_or(gd);
+            if !vendor_policy.excludes_lexical(&resolved) {
+                return Some(resolved);
+            }
         }
     }
     None
@@ -505,13 +705,23 @@ fn find_git_dir(watch_path: &Path) -> Option<PathBuf> {
 /// `.sl` dir via `symlink_metadata` (no link-follow), canonicalized so it can't
 /// escape. Sapling has no `.sl`-file indirection.
 pub(crate) fn find_sl_dir(watch_path: &Path) -> Option<PathBuf> {
+    find_sl_dir_with_policy(watch_path, &VendorPathPolicy::from_env())
+}
+
+fn find_sl_dir_with_policy(watch_path: &Path, vendor_policy: &VendorPathPolicy) -> Option<PathBuf> {
     for ancestor in watch_path.ancestors() {
         let dot_sl = ancestor.join(".sl");
+        if vendor_policy.excludes_lexical(&dot_sl) {
+            continue;
+        }
         let Ok(meta) = dot_sl.symlink_metadata() else {
             continue;
         };
         if meta.file_type().is_dir() {
-            return Some(dunce::canonicalize(&dot_sl).unwrap_or(dot_sl));
+            let resolved = dunce::canonicalize(&dot_sl).unwrap_or(dot_sl);
+            if !vendor_policy.excludes_lexical(&resolved) {
+                return Some(resolved);
+            }
         }
     }
     None
@@ -548,16 +758,27 @@ fn passes_custom_globs(
 /// `WalkBuilder` configured for watch selection: honors `.gitignore`,
 /// `.git/info/exclude`, global excludes, and `.ignore`, and never follows
 /// symlinks (so watches can't leave the workspace via a symlinked dir).
-fn ignore_walker(root: &Path, max_depth: Option<usize>) -> ignore::Walk {
-    WalkBuilder::new(root)
+fn ignore_walker(
+    root: &Path,
+    max_depth: Option<usize>,
+    vendor_policy: &VendorPathPolicy,
+) -> ignore::Walk {
+    let mut walker = WalkBuilder::new(root);
+    walker
         .hidden(false) // Let gitignore, not the leading dot, decide.
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
         .ignore(true)
         .follow_links(false)
-        .max_depth(max_depth)
-        .build()
+        .max_depth(max_depth);
+    let vendor_policy = vendor_policy.clone();
+    walker.filter_entry(move |entry| {
+        // Name-only boundary first: do not stat or descend into a clearly
+        // named vendor directory merely to decide that it is forbidden.
+        !vendor_policy.excludes_lexical(entry.path())
+    });
+    walker.build()
 }
 
 /// Immediate child directories of `root` to watch recursively.
@@ -569,14 +790,31 @@ fn ignore_walker(root: &Path, max_depth: Option<usize>) -> ignore::Walk {
 /// symlinked children are skipped. A `custom_include` negation overrides
 /// `custom_ignore` but not `.gitignore` (`WalkBuilder` never yields a gitignored
 /// child).
+#[cfg(test)]
 fn select_top_level_watch_dirs(
     root: &Path,
     custom_ignore: &Option<GlobSet>,
     custom_include: &Option<GlobSet>,
 ) -> Vec<PathBuf> {
+    let vendor_policy = VendorPathPolicy::from_env();
+    select_top_level_watch_dirs_with_policy(root, custom_ignore, custom_include, &vendor_policy)
+}
+
+fn select_top_level_watch_dirs_with_policy(
+    root: &Path,
+    custom_ignore: &Option<GlobSet>,
+    custom_include: &Option<GlobSet>,
+    vendor_policy: &VendorPathPolicy,
+) -> Vec<PathBuf> {
     // `usize::MAX` cap → never exceeded → always `Some`.
-    select_top_level_watch_dirs_capped(root, custom_ignore, custom_include, usize::MAX)
-        .unwrap_or_default()
+    select_top_level_watch_dirs_capped_with_policy(
+        root,
+        custom_ignore,
+        custom_include,
+        usize::MAX,
+        vendor_policy,
+    )
+    .unwrap_or_default()
 }
 
 /// Like [`select_top_level_watch_dirs`] but returns `None` once the non-ignored
@@ -585,18 +823,40 @@ fn select_top_level_watch_dirs(
 /// The fan-out vs. recursive-root decision uses this non-ignored count
 /// (gitignored children and `.git`/`.sl` don't count), and on `Some` the
 /// returned list is reused as the initial watch set.
+#[cfg(test)]
 fn select_top_level_watch_dirs_capped(
     root: &Path,
     custom_ignore: &Option<GlobSet>,
     custom_include: &Option<GlobSet>,
     max: usize,
 ) -> Option<Vec<PathBuf>> {
+    let vendor_policy = VendorPathPolicy::from_env();
+    select_top_level_watch_dirs_capped_with_policy(
+        root,
+        custom_ignore,
+        custom_include,
+        max,
+        &vendor_policy,
+    )
+}
+
+fn select_top_level_watch_dirs_capped_with_policy(
+    root: &Path,
+    custom_ignore: &Option<GlobSet>,
+    custom_include: &Option<GlobSet>,
+    max: usize,
+    vendor_policy: &VendorPathPolicy,
+) -> Option<Vec<PathBuf>> {
     let mut dirs = Vec::new();
-    for entry in ignore_walker(root, Some(1)).flatten() {
+    for entry in ignore_walker(root, Some(1), vendor_policy).flatten() {
         if entry.depth() == 0 {
             continue; // `root` itself.
         }
         let path = entry.path();
+        // Defense in depth before consulting file type or custom includes.
+        if vendor_policy.excludes_lexical(path) {
+            continue;
+        }
         if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
             continue;
         }
@@ -623,6 +883,7 @@ fn pruning_walker(
     root: &Path,
     custom_ignore: &Option<GlobSet>,
     custom_include: &Option<GlobSet>,
+    vendor_policy: &VendorPathPolicy,
 ) -> ignore::Walk {
     let mut walker = WalkBuilder::new(root);
     walker
@@ -634,7 +895,13 @@ fn pruning_walker(
         .follow_links(false);
     let custom_ignore = custom_ignore.clone();
     let custom_include = custom_include.clone();
+    let vendor_policy = vendor_policy.clone();
     walker.filter_entry(move |entry| {
+        // This check intentionally precedes file_type(): explicit vendor names
+        // are pruned without a metadata probe or read_dir descent.
+        if vendor_policy.excludes_lexical(entry.path()) {
+            return false;
+        }
         if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
             return true; // Files pass here; callers filter them separately.
         }
@@ -654,14 +921,29 @@ fn pruning_walker(
 /// every depth via [`pruning_walker`]. Returned **shallow-first** (stable
 /// within a depth), so a watch budget sheds the deepest directories, keeping
 /// coverage near the root.
+#[cfg(test)]
 fn select_per_dir_watch_dirs(
     root: &Path,
     custom_ignore: &Option<GlobSet>,
     custom_include: &Option<GlobSet>,
 ) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = pruning_walker(root, custom_ignore, custom_include)
+    let vendor_policy = VendorPathPolicy::from_env();
+    select_per_dir_watch_dirs_with_policy(root, custom_ignore, custom_include, &vendor_policy)
+}
+
+fn select_per_dir_watch_dirs_with_policy(
+    root: &Path,
+    custom_ignore: &Option<GlobSet>,
+    custom_include: &Option<GlobSet>,
+    vendor_policy: &VendorPathPolicy,
+) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = pruning_walker(root, custom_ignore, custom_include, vendor_policy)
         .flatten()
-        .filter(|e| e.depth() > 0 && e.file_type().is_some_and(|ft| ft.is_dir()))
+        .filter(|e| {
+            e.depth() > 0
+                && !vendor_policy.excludes_lexical(e.path())
+                && e.file_type().is_some_and(|ft| ft.is_dir())
+        })
         .map(|e| e.into_path())
         .collect();
     // Walk order is DFS; re-order shallow-first so a budget cut is depth-based.
@@ -682,14 +964,25 @@ fn select_per_dir_watch_dirs(
 /// surface via `FETCH_HEAD` and `packed-refs`. Worktree git dirs
 /// (`.git/worktrees/<n>`) have no `refs/`, so they get just the non-recursive
 /// watch, covering their `HEAD`/`index`.
+#[cfg(test)]
 fn per_dir_git_watches(git_dir: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+    per_dir_git_watches_with_policy(git_dir, &VendorPathPolicy::from_env())
+}
+
+fn per_dir_git_watches_with_policy(
+    git_dir: &Path,
+    vendor_policy: &VendorPathPolicy,
+) -> Vec<(PathBuf, RecursiveMode)> {
+    if vendor_policy.excludes_lexical(git_dir) {
+        return Vec::new();
+    }
     let mut watches = vec![(git_dir.to_path_buf(), RecursiveMode::NonRecursive)];
     let refs = git_dir.join("refs");
-    if refs.is_dir() {
+    if !vendor_policy.excludes_lexical(&refs) && refs.is_dir() {
         watches.push((refs.clone(), RecursiveMode::NonRecursive));
         for sub in ["heads", "tags"] {
             let p = refs.join(sub);
-            if p.is_dir() {
+            if !vendor_policy.excludes_lexical(&p) && p.is_dir() {
                 watches.push((p, RecursiveMode::Recursive));
             }
         }
@@ -723,15 +1016,19 @@ fn reconcile_top_level_watches(
     root: &Path,
     custom_ignore: &Option<GlobSet>,
     custom_include: &Option<GlobSet>,
+    vendor_policy: &VendorPathPolicy,
 ) {
     let desired: HashSet<PathBuf> =
-        select_top_level_watch_dirs(root, custom_ignore, custom_include)
+        select_top_level_watch_dirs_with_policy(root, custom_ignore, custom_include, vendor_policy)
             .into_iter()
             .collect();
 
     let (to_add, to_remove) = diff_watches(&desired, watched);
 
     for dir in to_add {
+        if vendor_policy.excludes_lexical(&dir) {
+            continue;
+        }
         match debouncer.watch(&dir, RecursiveMode::Recursive) {
             Ok(()) => {
                 watched.insert(dir);
@@ -778,12 +1075,16 @@ fn arm_pending_chunk(
     watched: &mut HashSet<PathBuf>,
     pending: &mut std::collections::VecDeque<PathBuf>,
     mode: RecursiveMode,
+    vendor_policy: &VendorPathPolicy,
 ) {
     for _ in 0..ARM_CHUNK {
         let Some(dir) = pending.pop_front() else {
             break;
         };
         if watched.contains(&dir) {
+            continue;
+        }
+        if vendor_policy.excludes_lexical(&dir) {
             continue;
         }
         match debouncer.watch(&dir, mode) {
@@ -819,9 +1120,15 @@ fn add_subtree_watches(
     subtree_root: &Path,
     custom_ignore: &Option<GlobSet>,
     custom_include: &Option<GlobSet>,
+    vendor_policy: &VendorPathPolicy,
     budget: usize,
     tx: &mpsc::UnboundedSender<RawFsEvent>,
 ) {
+    // Dynamic-create hard boundary. This must precede symlink_metadata: a
+    // `mkdir .claude` event is discarded without probing the new directory.
+    if vendor_policy.excludes_lexical(subtree_root) {
+        return;
+    }
     // Symlink or vanished-since-event: nothing to watch.
     if !subtree_root
         .symlink_metadata()
@@ -846,8 +1153,13 @@ fn add_subtree_watches(
         }
     };
 
-    for entry in pruning_walker(subtree_root, custom_ignore, custom_include).flatten() {
+    for entry in
+        pruning_walker(subtree_root, custom_ignore, custom_include, vendor_policy).flatten()
+    {
         let path = entry.path();
+        if vendor_policy.excludes_lexical(path) {
+            continue;
+        }
         if entry.file_type().is_some_and(|ft| ft.is_dir()) {
             if watched.contains(path) {
                 continue;
@@ -858,6 +1170,9 @@ fn add_subtree_watches(
                     subtree_root
                 );
                 break;
+            }
+            if vendor_policy.excludes_lexical(path) {
+                continue;
             }
             match debouncer.watch(path, RecursiveMode::NonRecursive) {
                 Ok(()) => {
@@ -921,6 +1236,11 @@ pub(crate) fn start_with_timeout(
     strategy: WatchStrategy,
     init_timeout: Duration,
 ) -> Result<(mpsc::UnboundedReceiver<RawFsEvent>, FsNotifyHandle), crate::FsNotifyError> {
+    // Preserve the strongest ordering guarantee for direct starts too (rather
+    // than relying only on `prepare_watch_root_with_policy` below).
+    if has_explicit_vendor_state_name(&watch_path) {
+        return Err(blocked_watch_root(&watch_path));
+    }
     let progress = Arc::new(Mutex::new(StartProgress::new()));
     let (tx, rx) = mpsc::unbounded_channel();
     let debounce_duration = Duration::from_millis(config.debounce_ms);
@@ -931,11 +1251,12 @@ pub(crate) fn start_with_timeout(
     // Arc so the watcher thread and its debouncer callback share, not copy, them.
     let custom_ignore = Arc::new(custom_ignore);
     let custom_include = Arc::new(custom_include);
+    let vendor_policy = Arc::new(VendorPathPolicy::from_env());
 
-    // Canonicalize once: notify echoes event paths under the watched path, but
-    // macOS FSEvents resolves symlinks, so a raw (symlinked/relative) root would
-    // never match `parent() == root` and dynamic watching would silently break.
-    let watch_path = dunce::canonicalize(&watch_path).unwrap_or(watch_path);
+    // Lexically reject explicit vendor roots before canonicalization. The
+    // canonical second pass catches an innocuous symlink alias; it also keeps
+    // notify's echoed paths aligned with the dynamic-watch root comparison.
+    let watch_path = prepare_watch_root_with_policy(watch_path, &vendor_policy)?;
 
     tracing::debug!("fs_notify: starting watcher under {:?}", watch_path);
 
@@ -976,6 +1297,7 @@ pub(crate) fn start_with_timeout(
         let watch_path_cb = watch_path.clone();
         let custom_ignore_cb = Arc::clone(&custom_ignore);
         let custom_include_cb = Arc::clone(&custom_include);
+        let vendor_policy_cb = Arc::clone(&vendor_policy);
 
         // Use NoCache to avoid walking the entire directory tree for file ID tracking.
         // This prevents multi-GB memory usage on large repos. Trade-off: rename events
@@ -993,6 +1315,12 @@ pub(crate) fn start_with_timeout(
                     let mut added: Vec<PathBuf> = Vec::new();
                     for mut event in merge_events(events) {
                         event.paths.retain(|path| {
+                            // Hard boundary first. In particular this rejects a
+                            // `.claude.json` root event before `is_ignored`
+                            // calls `path.is_dir()` or stats ancestor ignores.
+                            if vendor_policy_cb.excludes_lexical(path) {
+                                return false;
+                            }
                             if let Some(ref include_set) = *custom_include_cb
                                 && include_set.is_match(path)
                             {
@@ -1027,6 +1355,7 @@ pub(crate) fn start_with_timeout(
                                 &event.paths,
                                 &mut pruned,
                                 &mut added,
+                                &vendor_policy_cb,
                             ),
                         }
                         let _ = tx.send(event);
@@ -1063,8 +1392,12 @@ pub(crate) fn start_with_timeout(
                 // `Some(dirs)` whenever the root watch is non-recursive.
                 let initial = match strategy {
                     WatchStrategy::PerDir => {
-                        let mut dirs =
-                            select_per_dir_watch_dirs(&watch_path, &custom_ignore, &custom_include);
+                        let mut dirs = select_per_dir_watch_dirs_with_policy(
+                            &watch_path,
+                            &custom_ignore,
+                            &custom_include,
+                            &vendor_policy,
+                        );
                         if dirs.len() > budget {
                             tracing::warn!(
                                 "fs_notify: {} non-ignored dirs exceed watch budget {budget}; \
@@ -1077,11 +1410,12 @@ pub(crate) fn start_with_timeout(
                     }
                     // Fan-out vs. recursive-root decision on the non-ignored
                     // count; stops early past the cap (see `MAX_TOP_LEVEL_FANOUT`).
-                    WatchStrategy::Fanout => select_top_level_watch_dirs_capped(
+                    WatchStrategy::Fanout => select_top_level_watch_dirs_capped_with_policy(
                         &watch_path,
                         &custom_ignore,
                         &custom_include,
                         MAX_TOP_LEVEL_FANOUT,
+                        &vendor_policy,
                     ),
                 };
                 let root_non_recursive = initial.is_some();
@@ -1127,6 +1461,9 @@ pub(crate) fn start_with_timeout(
                         dirs
                     };
                     for dir in sync_head {
+                        if vendor_policy.excludes_lexical(&dir) {
+                            continue;
+                        }
                         match debouncer.watch(&dir, child_mode) {
                             Ok(()) => {
                                 watched_dirs.insert(dir);
@@ -1148,12 +1485,12 @@ pub(crate) fn start_with_timeout(
                 // (their events pass the VCS filter, but their dirs belong to
                 // the surgical VCS watches, never `watched_dirs`).
                 let git_dir = if watch_vcs {
-                    find_git_dir(&watch_path)
+                    find_git_dir_with_policy(&watch_path, &vendor_policy)
                 } else {
                     None
                 };
                 let sl_dir = if watch_vcs && sapling {
-                    find_sl_dir(&watch_path)
+                    find_sl_dir_with_policy(&watch_path, &vendor_policy)
                 } else {
                     None
                 };
@@ -1162,11 +1499,14 @@ pub(crate) fn start_with_timeout(
                     .filter(|gd| should_watch_separate_vcs_dir(root_non_recursive, gd, &watch_path))
                 {
                     let git_watches = if per_dir {
-                        per_dir_git_watches(gd)
+                        per_dir_git_watches_with_policy(gd, &vendor_policy)
                     } else {
                         vec![(gd.to_path_buf(), RecursiveMode::Recursive)]
                     };
                     for (p, mode) in git_watches {
+                        if vendor_policy.excludes_lexical(&p) {
+                            continue;
+                        }
                         if let Err(e) = debouncer.watch(&p, mode) {
                             tracing::warn!("failed to watch git path {:?}: {:?}", p, e);
                         } else {
@@ -1181,6 +1521,7 @@ pub(crate) fn start_with_timeout(
                 if let Some(sd) = sl_dir
                     .as_deref()
                     .filter(|sd| should_watch_separate_vcs_dir(root_non_recursive, sd, &watch_path))
+                    .filter(|sd| !vendor_policy.excludes_lexical(sd))
                 {
                     if let Err(e) = debouncer.watch(sd, RecursiveMode::NonRecursive) {
                         tracing::warn!("failed to watch sl dir {:?}: {:?}", sd, e);
@@ -1200,6 +1541,7 @@ pub(crate) fn start_with_timeout(
                             &mut watched_dirs,
                             &mut pending_dirs,
                             child_mode,
+                            &vendor_policy,
                         );
                     }
                 }
@@ -1241,6 +1583,7 @@ pub(crate) fn start_with_timeout(
                                         &watch_path,
                                         &custom_ignore,
                                         &custom_include,
+                                        &vendor_policy,
                                     );
                                 }
                             }
@@ -1281,6 +1624,7 @@ pub(crate) fn start_with_timeout(
                                             a,
                                             &custom_ignore,
                                             &custom_include,
+                                            &vendor_policy,
                                             budget,
                                             &backfill_tx,
                                         );
@@ -1329,6 +1673,7 @@ pub(crate) fn start_with_timeout(
                             &mut watched_dirs,
                             &mut pending_dirs,
                             child_mode,
+                            &vendor_policy,
                         );
                         watch_count_thread
                             .store(1 + watched_dirs.len() + vcs_watches, Ordering::Relaxed);
@@ -1537,6 +1882,160 @@ mod tests {
                 Duration::from_millis(EVENT_WAIT_MS),
                 Duration::from_millis(50),
             )
+        }
+
+        fn flattened_paths(events: &[RawFsEvent]) -> Vec<&Path> {
+            events
+                .iter()
+                .flat_map(|event| event.paths.iter().map(PathBuf::as_path))
+                .collect()
+        }
+
+        fn per_dir_vcs_watch_count(root: &Path) -> usize {
+            let policy = VendorPathPolicy::from_env();
+            let git = find_git_dir_with_policy(root, &policy)
+                .map(|dir| per_dir_git_watches_with_policy(&dir, &policy).len())
+                .unwrap_or_default();
+            let sl = usize::from(find_sl_dir_with_policy(root, &policy).is_some());
+            git + sl
+        }
+
+        #[test]
+        #[serial]
+        fn vendor_state_present_at_start_is_neither_watched_nor_forwarded() {
+            let temp = TempDir::new().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            for dir in [
+                ".claude/nested",
+                ".codex/nested",
+                ".agents/nested",
+                ".grok/nested",
+                ".cursor/nested",
+            ] {
+                fs::create_dir_all(root.join(dir)).unwrap();
+            }
+            for dir in [".claude", ".codex", ".agents", ".grok", ".cursor"] {
+                fs::write(root.join(dir).join("nested/existing.txt"), "before").unwrap();
+            }
+            fs::write(root.join(".claude.json"), "before").unwrap();
+
+            let config = FsNotifyConfig {
+                debounce_ms: TEST_DEBOUNCE_MS,
+                ignore_patterns: vec![
+                    "!**/.claude".into(),
+                    "!**/.claude/**".into(),
+                    "!**/.codex".into(),
+                    "!**/.codex/**".into(),
+                    "!**/.agents".into(),
+                    "!**/.agents/**".into(),
+                    "!**/.claude.json".into(),
+                ],
+            };
+            let (mut rx, handle) =
+                start_with_retry_strategy(root.clone(), config, WatchStrategy::PerDir).unwrap();
+
+            assert_eq!(
+                handle.watch_count(),
+                5 + per_dir_vcs_watch_count(&root),
+                "only root plus .grok/.cursor and their children should be armed"
+            );
+            for dir in [".claude", ".codex", ".agents", ".grok", ".cursor"] {
+                fs::write(root.join(dir).join("nested/existing.txt"), "after").unwrap();
+            }
+            fs::write(root.join(".claude.json"), "after").unwrap();
+
+            let events =
+                collect_events_smart(&mut rx, Duration::from_secs(1), Duration::from_millis(150));
+            let paths = flattened_paths(&events);
+            assert!(
+                paths
+                    .iter()
+                    .all(|path| !has_explicit_vendor_state_name(path)),
+                "vendor events must never leave the raw watcher: {events:?}"
+            );
+            for safe in [
+                Path::new(".grok/nested/existing.txt"),
+                Path::new(".cursor/nested/existing.txt"),
+            ] {
+                assert!(
+                    paths.iter().any(|path| path.ends_with(safe)),
+                    "normal hidden path {safe:?} must still emit: {events:?}"
+                );
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn vendor_state_created_at_runtime_cannot_grow_watches_or_emit() {
+            let temp = TempDir::new().unwrap();
+            let root = dunce::canonicalize(temp.path()).unwrap();
+            let config = FsNotifyConfig {
+                debounce_ms: TEST_DEBOUNCE_MS,
+                ignore_patterns: vec![
+                    "!**/.claude".into(),
+                    "!**/.claude/**".into(),
+                    "!**/.codex".into(),
+                    "!**/.codex/**".into(),
+                    "!**/.agents".into(),
+                    "!**/.agents/**".into(),
+                    "!**/.claude.json".into(),
+                ],
+            };
+            let (mut rx, handle) =
+                start_with_retry_strategy(root.clone(), config, WatchStrategy::PerDir).unwrap();
+
+            for dir in [
+                ".claude/nested",
+                ".codex/nested",
+                "workspace/.agents/nested",
+                ".grok",
+                ".cursor",
+            ] {
+                fs::create_dir_all(root.join(dir)).unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(500));
+            let _ = collect_events_smart(
+                &mut rx,
+                Duration::from_millis(300),
+                Duration::from_millis(100),
+            );
+            assert_eq!(
+                handle.watch_count(),
+                4 + per_dir_vcs_watch_count(&root),
+                "runtime arming should include workspace/.grok/.cursor, never vendor dirs"
+            );
+
+            for file in [
+                ".claude/nested/secret.txt",
+                ".codex/nested/secret.txt",
+                "workspace/.agents/nested/secret.txt",
+                ".grok/visible.txt",
+                ".cursor/visible.txt",
+                "workspace/visible.txt",
+                ".claude.json",
+            ] {
+                fs::write(root.join(file), "event").unwrap();
+            }
+
+            let events =
+                collect_events_smart(&mut rx, Duration::from_secs(1), Duration::from_millis(150));
+            let paths = flattened_paths(&events);
+            assert!(
+                paths
+                    .iter()
+                    .all(|path| !has_explicit_vendor_state_name(path)),
+                "runtime vendor events must be retained out: {events:?}"
+            );
+            for safe in [
+                Path::new(".grok/visible.txt"),
+                Path::new(".cursor/visible.txt"),
+                Path::new("workspace/visible.txt"),
+            ] {
+                assert!(
+                    paths.iter().any(|path| path.ends_with(safe)),
+                    "normal path {safe:?} must still emit: {events:?}"
+                );
+            }
         }
 
         #[test]
@@ -3185,6 +3684,41 @@ mod tests {
         }
 
         #[test]
+        fn vendor_dirs_are_hard_excluded_even_by_custom_negation() {
+            let temp = TempDir::new().unwrap();
+            let root = temp.path();
+            for name in [".claude", ".codex", ".agents", ".grok", ".cursor"] {
+                fs::create_dir_all(root.join(name).join("nested")).unwrap();
+            }
+            fs::create_dir_all(root.join(".claude.json/nested")).unwrap();
+            let (_, include) = build_globsets(&[
+                "!**/.claude".to_string(),
+                "!**/.codex".to_string(),
+                "!**/.agents".to_string(),
+            ]);
+
+            let dirs = select_top_level_watch_dirs_with_policy(
+                root,
+                &None,
+                &include,
+                &VendorPathPolicy::default(),
+            );
+
+            for blocked in VENDOR_STATE_DIR_NAMES {
+                assert!(
+                    !contains_name(&dirs, blocked),
+                    "custom include must not restore {blocked}: {dirs:?}"
+                );
+            }
+            assert!(
+                !contains_name(&dirs, CLAUDE_JSON_NAME),
+                ".claude.json directory component must be a hard exclusion: {dirs:?}"
+            );
+            assert!(contains_name(&dirs, ".grok"), "safe hidden dir: {dirs:?}");
+            assert!(contains_name(&dirs, ".cursor"), "safe hidden dir: {dirs:?}");
+        }
+
+        #[test]
         fn watches_children_even_when_root_is_under_a_gitignored_path() {
             // The user explicitly chose a cwd that an ancestor .gitignore marks
             // ignored; its children must still be watched.
@@ -3358,6 +3892,44 @@ mod tests {
             );
         }
 
+        #[test]
+        fn select_per_dir_prunes_vendor_components_at_every_depth() {
+            let temp = TempDir::new().unwrap();
+            let root = temp.path();
+            for path in [
+                "app/.claude/deep",
+                "app/nested/.codex/deep",
+                ".agents/deep",
+                ".grok/cache",
+                ".cursor/rules",
+            ] {
+                fs::create_dir_all(root.join(path)).unwrap();
+            }
+            let (_, include) = build_globsets(&[
+                "!**/.claude".to_string(),
+                "!**/.codex".to_string(),
+                "!**/.agents".to_string(),
+            ]);
+
+            let dirs = select_per_dir_watch_dirs_with_policy(
+                root,
+                &None,
+                &include,
+                &VendorPathPolicy::default(),
+            );
+            let names = rel(&dirs, root);
+
+            assert!(
+                !names.iter().any(|name| VENDOR_STATE_DIR_NAMES
+                    .iter()
+                    .any(|blocked| name.split('/').any(|part| part == *blocked))),
+                "vendor subtrees must be pruned before descent: {names:?}"
+            );
+            for safe in [".grok", ".grok/cache", ".cursor", ".cursor/rules"] {
+                assert!(names.contains(&safe.to_string()), "{safe}: {names:?}");
+            }
+        }
+
         /// Symlinked dirs are never watched (or followed), so watches can't
         /// leave the workspace.
         #[cfg(unix)]
@@ -3451,6 +4023,7 @@ mod tests {
                 &[dir.clone(), file.clone()],
                 &mut pruned,
                 &mut added,
+                &VendorPathPolicy::default(),
             );
             assert_eq!(added, vec![dir.clone()], "only dirs become subtree adds");
             // Structural event on an existing dir also prunes (re-arm for the
@@ -3468,9 +4041,35 @@ mod tests {
                 &[PathBuf::from("/gone/dir")],
                 &mut pruned,
                 &mut added,
+                &VendorPathPolicy::default(),
             );
             assert_eq!(pruned, vec![PathBuf::from("/gone/dir")]);
             assert!(added.is_empty());
+        }
+
+        #[test]
+        fn scan_updates_discards_vendor_paths_before_disk_classification() {
+            let root = Path::new("/definitely/not/read");
+            let paths = [
+                root.join(".claude/secret"),
+                root.join("nested/.codex/secret"),
+                root.join(".agents/secret"),
+                root.join(".claude.json"),
+                root.join("nested/.claude.json/secret"),
+            ];
+            let mut pruned = Vec::new();
+            let mut added = Vec::new();
+
+            scan_per_dir_updates(
+                FsEventKind::Created,
+                &paths,
+                &mut pruned,
+                &mut added,
+                &VendorPathPolicy::default(),
+            );
+
+            assert!(pruned.is_empty(), "blocked paths must not be classified");
+            assert!(added.is_empty(), "blocked paths must not be classified");
         }
 
         /// FSEvents can coalesce a subtree removal into `Modified` on the
@@ -3484,6 +4083,7 @@ mod tests {
                 &[PathBuf::from("/vanished/pkg")],
                 &mut pruned,
                 &mut added,
+                &VendorPathPolicy::default(),
             );
             assert_eq!(pruned, vec![PathBuf::from("/vanished/pkg")]);
             assert!(added.is_empty());
@@ -3505,6 +4105,7 @@ mod tests {
                 std::slice::from_ref(&dir),
                 &mut pruned,
                 &mut added,
+                &VendorPathPolicy::default(),
             );
             assert_eq!(added, vec![dir]);
             assert!(pruned.is_empty(), "no re-arm for non-structural events");
@@ -3526,6 +4127,7 @@ mod tests {
                 &[old_dir.clone(), new_dir.clone()],
                 &mut pruned,
                 &mut added,
+                &VendorPathPolicy::default(),
             );
             assert_eq!(pruned, vec![old_dir, new_dir.clone()]);
             assert_eq!(added, vec![new_dir]);
@@ -3548,6 +4150,7 @@ mod tests {
                 std::slice::from_ref(&link),
                 &mut pruned,
                 &mut added,
+                &VendorPathPolicy::default(),
             );
             assert!(added.is_empty(), "symlink must not be added: {added:?}");
         }
@@ -3602,6 +4205,69 @@ mod tests {
             // one-reconcile-per-batch coalescing in the callback).
             let mixed = [PathBuf::from("/r/pkg/sub"), PathBuf::from("/r/newpkg")];
             assert!(event_triggers_reconcile(FsEventKind::Created, &mixed, root));
+        }
+
+        #[test]
+        fn explicit_vendor_roots_are_rejected_but_safe_hidden_roots_survive() {
+            let temp = TempDir::new().unwrap();
+            let policy = VendorPathPolicy::default();
+
+            for blocked in [
+                temp.path().join(".claude/missing"),
+                temp.path().join("nested/.codex/missing"),
+                temp.path().join(".agents"),
+                temp.path().join(".claude.json"),
+                temp.path().join("nested/.claude.json/missing"),
+            ] {
+                assert!(
+                    prepare_watch_root_with_policy(blocked, &policy).is_err(),
+                    "explicit vendor path must fail before canonicalization"
+                );
+            }
+
+            for allowed in [
+                temp.path().join(".grok"),
+                temp.path().join(".cursor"),
+                temp.path().join(".claude.json.bak"),
+            ] {
+                assert_eq!(
+                    prepare_watch_root_with_policy(allowed.clone(), &policy).unwrap(),
+                    allowed
+                );
+            }
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn canonical_policy_blocks_vendor_root_aliases_and_custom_env_targets() {
+            let temp = TempDir::new().unwrap();
+
+            let fixed_target = temp.path().join(".codex");
+            fs::create_dir(&fixed_target).unwrap();
+            let fixed_alias = temp.path().join("fixed-alias");
+            std::os::unix::fs::symlink(&fixed_target, &fixed_alias).unwrap();
+            assert!(
+                prepare_watch_root_with_policy(fixed_alias, &VendorPathPolicy::default(),).is_err(),
+                "canonical recheck must reject an alias into a fixed vendor root"
+            );
+
+            let workspace = temp.path().join("workspace");
+            let custom_target = workspace.join("state-target");
+            fs::create_dir_all(custom_target.join("deep")).unwrap();
+            fs::create_dir_all(workspace.join(".grok/cache")).unwrap();
+            let custom_alias = temp.path().join("configured-state");
+            std::os::unix::fs::symlink(&custom_target, &custom_alias).unwrap();
+            let policy = VendorPathPolicy::from_roots([custom_alias]);
+
+            let dirs = select_per_dir_watch_dirs_with_policy(&workspace, &None, &None, &policy);
+            assert!(
+                !dirs.iter().any(|path| path.starts_with(&custom_target)),
+                "canonical custom CODEX_HOME/CLAUDE_CONFIG_DIR target must be pruned: {dirs:?}"
+            );
+            assert!(
+                dirs.iter().any(|path| path == &workspace.join(".grok")),
+                "unrelated hidden roots remain eligible: {dirs:?}"
+            );
         }
 
         #[test]

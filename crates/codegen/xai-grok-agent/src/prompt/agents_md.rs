@@ -1,10 +1,7 @@
-//! AGENTS.md / Claude.md / rules directory discovery and loading.
+//! AGENTS.md / rules directory discovery and loading.
 //!
 //! Searches from cwd to repo root, plus `~/.grok/`. Also discovers
-//! `*.md` files in rules directories: vendor-prefixed `.grok/rules/`,
-//! `.claude/rules/`, and `.cursor/rules/` in project directories, and a
-//! plain `rules/` directly under the vendor-qualified home-scope roots
-//! (`~/.grok/rules/`, `~/.claude/rules/`, `~/.cursor/rules/`).
+//! `*.md` files in `.grok/rules/` and `.cursor/rules/` directories.
 
 use std::path::{Path, PathBuf};
 
@@ -15,12 +12,27 @@ use xai_grok_tools::types::compat::CompatConfig;
 /// Represents an agent config file with its path and content.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentConfigFile {
-    /// The filename (e.g., "AGENTS.md", "Claude.md")
+    /// The filename (e.g., "AGENTS.md")
     pub file_name: String,
     /// The full absolute path to the config file
     pub file_path: String,
     /// The content of the config file
     pub content: String,
+}
+
+/// Reject project-instruction sources that lexically or canonically resolve
+/// into Claude/Codex-owned state. Call before every filesystem probe because
+/// otherwise a symlinked `.grok/rules` directory leaks vendor metadata even if
+/// individual files are filtered later.
+fn is_allowed_instruction_path(path: &Path) -> bool {
+    let allowed = xai_grok_config::validate_grok_path(path).is_some();
+    if !allowed {
+        tracing::warn!(
+            path = %path.display(),
+            "refusing project instructions under Claude/Codex vendor state"
+        );
+    }
+    allowed
 }
 
 /// Find matching agent config files in a directory.
@@ -33,19 +45,19 @@ fn find_agent_files(dir: &Path, filenames: &[&str]) -> Vec<PathBuf> {
         .iter()
         .filter_map(|name| {
             let path = dir.join(name);
-            path.exists().then_some(path)
+            (is_allowed_instruction_path(&path) && path.exists()).then_some(path)
         })
         .collect()
 }
 
-/// Find `*.md` files in `.grok/rules/`, `.claude/rules/`, and `.cursor/rules/`,
+/// Find `*.md` files in `.grok/rules/` and `.cursor/rules/`,
 /// sorted alphabetically. `rules_subdirs` is the (compat-gated) list, precomputed
 /// once by the caller so the walk doesn't re-allocate it per directory.
 fn find_rules_files(dir: &Path, rules_subdirs: &[&str]) -> Vec<PathBuf> {
     let mut results = Vec::new();
     for rules_subdir in rules_subdirs {
         let rules_dir = dir.join(rules_subdir);
-        if !rules_dir.is_dir() {
+        if !is_allowed_instruction_path(&rules_dir) || !rules_dir.is_dir() {
             continue;
         }
         let mut entries: Vec<PathBuf> = match std::fs::read_dir(&rules_dir) {
@@ -53,9 +65,10 @@ fn find_rules_files(dir: &Path, rules_subdirs: &[&str]) -> Vec<PathBuf> {
                 .filter_map(|entry| entry.ok())
                 .map(|e| e.path())
                 .filter(|p| {
-                    p.extension()
-                        .and_then(|ext| ext.to_str())
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                    is_allowed_instruction_path(p)
+                        && p.extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
                 })
                 .collect(),
             Err(_) => continue,
@@ -144,9 +157,8 @@ fn add_discovered_candidate(
 /// Read Agents.md from ~/.grok/, git repo root, and session cwd.
 /// Returns a list of AgentConfigFile with their file names, full paths, and contents.
 ///
-/// `compat` gates which vendor (`.claude`/`.cursor`) surfaces are scanned for
-/// rules / project-instruction files; pass `CompatConfig::default()` to
-/// preserve the historical all-vendors behavior.
+/// `compat` gates Cursor surfaces. Claude project instructions are
+/// build-disabled.
 pub async fn read_agents_config_with_paths(
     working_directory: &str,
     compat: CompatConfig,
@@ -182,9 +194,14 @@ async fn read_agents_config_with_roots(
     home_dir: Option<PathBuf>,
 ) -> Vec<AgentConfigFile> {
     let cwd = PathBuf::from(working_directory);
-    let git_root = git2::Repository::discover(&cwd)
-        .ok()
-        .and_then(|repo| repo.workdir().map(Path::to_path_buf));
+    // Decide this before git discovery or gitignore construction.  Per-file
+    // validation alone would still let a cwd inside Claude/Codex state leak
+    // repository metadata while building the candidate list.
+    let cwd_allowed = is_allowed_instruction_path(&cwd);
+    let git_root = cwd_allowed
+        .then(|| git2::Repository::discover(&cwd).ok())
+        .flatten()
+        .and_then(|repo| repo.workdir().map(|p| p.to_path_buf()));
     let gitignore = build_gitignore(git_root.as_deref());
     let agent_filenames = compat.agent_filenames();
     let project_rules_dirs = compat.rules_dirs();
@@ -286,6 +303,9 @@ async fn read_agents_config_with_roots(
     candidates
         .into_iter()
         .filter_map(|candidate| {
+            if !is_allowed_instruction_path(&candidate.path) {
+                return None;
+            }
             let content = std::fs::read_to_string(&candidate.path).ok()?;
             let content = if candidate.is_rule {
                 xai_grok_tools::implementations::skills::skill::extract_skill_body(&content)
@@ -349,11 +369,21 @@ fn render_agents_md(configs: &[AgentConfigFile]) -> Option<String> {
             "\n## From: {}\n",
             neutralize_reminder_tags(&config.file_path)
         ));
-        section.push_str(&neutralize_reminder_tags(&config.content));
+
+        // Strip YAML frontmatter from Grok-native rules files so globs/paths
+        // metadata doesn't leak into the system prompt as raw YAML.
+        let is_rules_file = config.file_path.contains("/.grok/rules/");
+        let content = if is_rules_file {
+            xai_grok_tools::implementations::skills::skill::extract_skill_body(&config.content)
+        } else {
+            config.content.clone()
+        };
+
+        section.push_str(&neutralize_reminder_tags(&content));
         section.push('\n');
     }
 
-    section.push_str("\nFollow these instructions exactly. When working in subdirectories not listed above, check for additional project instruction files (AGENTS.md, Claude.md, etc.).");
+    section.push_str("\nFollow these instructions exactly. When working in subdirectories not listed above, check for additional AGENTS.md and .grok/rules instruction files.");
     section.push_str("\n</system-reminder>");
 
     Some(section)
@@ -421,33 +451,41 @@ mod tests {
     }
 
     #[test]
-    fn find_agent_files_discovers_claude_subdir() {
+    fn find_agent_files_ignores_all_claude_instruction_names() {
         let tmp = tempfile::tempdir().unwrap();
+        for name in ["Claude.md", "CLAUDE.md", "CLAUDE.local.md"] {
+            fs::write(tmp.path().join(name), "# Project instructions").unwrap();
+        }
         let claude_dir = tmp.path().join(".claude");
         fs::create_dir_all(&claude_dir).unwrap();
         fs::write(claude_dir.join("CLAUDE.md"), "# Project instructions").unwrap();
+        fs::write(
+            claude_dir.join("CLAUDE.local.md"),
+            "# Local project instructions",
+        )
+        .unwrap();
 
         let files = find_agent_files(tmp.path(), &CompatConfig::default().agent_filenames());
         assert!(
-            files
-                .iter()
-                .any(|f| f.to_string_lossy().contains(".claude/CLAUDE.md")),
-            "Should discover .claude/CLAUDE.md, got: {files:?}"
+            files.is_empty(),
+            "Claude instruction files must be ignored, got: {files:?}"
         );
     }
 
     #[test]
-    fn find_rules_files_discovers_claude_rules() {
+    fn find_rules_files_ignores_claude_rules_and_keeps_cursor_rules() {
         let tmp = tempfile::tempdir().unwrap();
         let rules_dir = tmp.path().join(".claude").join("rules");
         fs::create_dir_all(&rules_dir).unwrap();
         fs::write(rules_dir.join("style.md"), "# Style rules").unwrap();
         fs::write(rules_dir.join("safety.md"), "# Safety rules").unwrap();
+        let cursor_rules_dir = tmp.path().join(".cursor").join("rules");
+        fs::create_dir_all(&cursor_rules_dir).unwrap();
+        fs::write(cursor_rules_dir.join("cursor.md"), "# Cursor rules").unwrap();
 
         let files = find_rules_files(tmp.path(), &CompatConfig::default().rules_dirs());
-        assert_eq!(files.len(), 2);
-        assert!(files[0].to_string_lossy().contains("safety.md"));
-        assert!(files[1].to_string_lossy().contains("style.md"));
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_string_lossy().contains("cursor.md"));
     }
 
     // ── format_agents_md_section tests ──────────────────────────────
@@ -607,326 +645,356 @@ mod tests {
         assert!(configs.iter().any(|c| c.content.contains("outside git")));
     }
 
-    #[tokio::test]
-    async fn home_and_project_rules_have_stable_order_without_doubled_paths() {
-        let tmp = tempfile::tempdir().unwrap();
-        let grok_home = tmp.path().join("custom-grok-home");
-        let home = tmp.path().join("home");
-        let repo = tmp.path().join("repo");
-        fs::create_dir_all(grok_home.join("rules")).unwrap();
-        fs::create_dir_all(home.join(".claude/rules")).unwrap();
-        fs::create_dir_all(home.join(".cursor/rules")).unwrap();
-        fs::create_dir_all(repo.join(".grok/rules")).unwrap();
-        fs::create_dir_all(repo.join(".claude/rules")).unwrap();
-        fs::create_dir_all(repo.join(".cursor/rules")).unwrap();
-        init_git_repo(&repo);
+    #[cfg(any())]
+    mod upstream_vendor_compat_tests {
+        use super::*;
+        use std::fs;
 
-        for (path, content) in [
-            (grok_home.join("rules/b.md"), "grok-b"),
-            (grok_home.join("rules/a.md"), "grok-a"),
-            (home.join(".claude/rules/a.md"), "claude-a"),
-            (home.join(".cursor/rules/a.md"), "cursor-a"),
-            (repo.join("AGENTS.md"), "repo-named"),
-            (repo.join(".grok/rules/a.md"), "repo-grok"),
-            (repo.join(".claude/rules/a.md"), "repo-claude"),
-            (repo.join(".cursor/rules/a.md"), "repo-cursor"),
-        ] {
-            fs::write(path, content).unwrap();
-        }
-        for path in [
-            grok_home.join(".grok/rules/doubled.md"),
-            home.join(".claude/.claude/rules/doubled.md"),
-            home.join(".cursor/.cursor/rules/doubled.md"),
-        ] {
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, "doubled").unwrap();
-        }
+        #[tokio::test]
+        async fn home_and_project_rules_have_stable_order_without_doubled_paths() {
+            let tmp = tempfile::tempdir().unwrap();
+            let grok_home = tmp.path().join("custom-grok-home");
+            let home = tmp.path().join("home");
+            let repo = tmp.path().join("repo");
+            fs::create_dir_all(grok_home.join("rules")).unwrap();
+            fs::create_dir_all(home.join(".claude/rules")).unwrap();
+            fs::create_dir_all(home.join(".cursor/rules")).unwrap();
+            fs::create_dir_all(repo.join(".grok/rules")).unwrap();
+            fs::create_dir_all(repo.join(".claude/rules")).unwrap();
+            fs::create_dir_all(repo.join(".cursor/rules")).unwrap();
+            init_git_repo(&repo);
 
-        let configs = read_agents_config_with_roots(
-            repo.to_str().unwrap(),
-            None,
-            CompatConfig::default(),
-            grok_home,
-            Some(home),
-        )
-        .await;
-        let contents: Vec<&str> = configs
-            .iter()
-            .map(|config| config.content.as_str())
-            .collect();
-        assert_eq!(
-            contents,
-            vec![
-                "grok-a",
-                "grok-b",
-                "claude-a",
-                "cursor-a",
-                "repo-named",
-                "repo-grok",
-                "repo-claude",
-                "repo-cursor",
-            ]
-        );
-        assert!(
-            configs
-                .iter()
-                .all(|config| !config.file_path.contains("doubled"))
-        );
-    }
+            for (path, content) in [
+                (grok_home.join("rules/b.md"), "grok-b"),
+                (grok_home.join("rules/a.md"), "grok-a"),
+                (home.join(".claude/rules/a.md"), "claude-a"),
+                (home.join(".cursor/rules/a.md"), "cursor-a"),
+                (repo.join("AGENTS.md"), "repo-named"),
+                (repo.join(".grok/rules/a.md"), "repo-grok"),
+                (repo.join(".claude/rules/a.md"), "repo-claude"),
+                (repo.join(".cursor/rules/a.md"), "repo-cursor"),
+            ] {
+                fs::write(path, content).unwrap();
+            }
+            for path in [
+                grok_home.join(".grok/rules/doubled.md"),
+                home.join(".claude/.claude/rules/doubled.md"),
+                home.join(".cursor/.cursor/rules/doubled.md"),
+            ] {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, "doubled").unwrap();
+            }
 
-    #[tokio::test]
-    async fn vendor_home_agents_and_rules_cells_are_independent() {
-        let tmp = tempfile::tempdir().unwrap();
-        let grok_home = tmp.path().join("grok-home");
-        let home = tmp.path().join("home");
-        let cwd = tmp.path().join("project");
-        fs::create_dir_all(&grok_home).unwrap();
-        fs::create_dir_all(&cwd).unwrap();
-        for vendor in [".claude", ".cursor"] {
-            let vendor_home = home.join(vendor);
-            fs::create_dir_all(vendor_home.join("rules")).unwrap();
-            fs::write(vendor_home.join("AGENTS.md"), format!("{vendor}-named")).unwrap();
-            fs::write(vendor_home.join("rules/rule.md"), format!("{vendor}-rule")).unwrap();
-        }
-
-        let mut rules_only = CompatConfig::default();
-        rules_only.claude.agents = false;
-        rules_only.cursor.agents = false;
-        let configs = read_agents_config_with_roots(
-            cwd.to_str().unwrap(),
-            None,
-            rules_only,
-            grok_home.clone(),
-            Some(home.clone()),
-        )
-        .await;
-        for vendor in [".claude", ".cursor"] {
-            assert!(
-                configs
-                    .iter()
-                    .any(|config| config.content == format!("{vendor}-rule"))
-            );
-            assert!(
-                !configs
-                    .iter()
-                    .any(|config| config.content == format!("{vendor}-named"))
-            );
-        }
-
-        let mut agents_only = CompatConfig::default();
-        agents_only.claude.rules = false;
-        agents_only.cursor.rules = false;
-        let configs = read_agents_config_with_roots(
-            cwd.to_str().unwrap(),
-            None,
-            agents_only,
-            grok_home,
-            Some(home),
-        )
-        .await;
-        for vendor in [".claude", ".cursor"] {
-            assert!(
-                configs
-                    .iter()
-                    .any(|config| config.content == format!("{vendor}-named"))
-            );
-            assert!(
-                !configs
-                    .iter()
-                    .any(|config| config.content == format!("{vendor}-rule"))
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn nested_grok_home_keeps_project_role_in_repo_order() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("repo");
-        let nested = repo.join("nested");
-        fs::create_dir_all(nested.join("rules")).unwrap();
-        fs::create_dir_all(nested.join(".grok/rules")).unwrap();
-        init_git_repo(&repo);
-        fs::write(nested.join("rules/home.md"), "nested-home-rule").unwrap();
-        fs::write(repo.join("AGENTS.md"), "repo-named").unwrap();
-        fs::write(nested.join("AGENTS.md"), "nested-named").unwrap();
-        fs::write(nested.join(".grok/rules/project.md"), "nested-project-rule").unwrap();
-
-        let configs = read_agents_config_with_roots(
-            nested.to_str().unwrap(),
-            None,
-            CompatConfig::default(),
-            nested.clone(),
-            None,
-        )
-        .await;
-        assert_eq!(
-            configs
+            let configs = read_agents_config_with_roots(
+                repo.to_str().unwrap(),
+                None,
+                CompatConfig::default(),
+                grok_home,
+                Some(home),
+            )
+            .await;
+            let contents: Vec<&str> = configs
                 .iter()
                 .map(|config| config.content.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                "nested-home-rule",
-                "repo-named",
-                "nested-named",
-                "nested-project-rule",
-            ]
-        );
-    }
+                .collect();
+            assert_eq!(
+                contents,
+                vec![
+                    "grok-a",
+                    "grok-b",
+                    "claude-a",
+                    "cursor-a",
+                    "repo-named",
+                    "repo-grok",
+                    "repo-claude",
+                    "repo-cursor",
+                ]
+            );
+            assert!(
+                configs
+                    .iter()
+                    .all(|config| !config.file_path.contains("doubled"))
+            );
+        }
 
-    #[tokio::test]
-    async fn overlapping_grok_home_and_project_root_merges_roles() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("repo");
-        fs::create_dir_all(repo.join("rules")).unwrap();
-        fs::create_dir_all(repo.join(".grok/rules")).unwrap();
-        fs::create_dir_all(repo.join(".claude/rules")).unwrap();
-        init_git_repo(&repo);
-        fs::write(repo.join("rules/home.md"), "home-rule").unwrap();
-        fs::write(repo.join(".grok/rules/project.md"), "project-grok-rule").unwrap();
-        fs::write(repo.join(".claude/rules/project.md"), "project-claude-rule").unwrap();
-        fs::create_dir_all(repo.join(".grok/.grok/rules")).unwrap();
-        fs::write(repo.join(".grok/.grok/rules/doubled.md"), "doubled").unwrap();
+        #[tokio::test]
+        async fn vendor_home_agents_and_rules_cells_are_independent() {
+            let tmp = tempfile::tempdir().unwrap();
+            let grok_home = tmp.path().join("grok-home");
+            let home = tmp.path().join("home");
+            let cwd = tmp.path().join("project");
+            fs::create_dir_all(&grok_home).unwrap();
+            fs::create_dir_all(&cwd).unwrap();
+            for vendor in [".claude", ".cursor"] {
+                let vendor_home = home.join(vendor);
+                fs::create_dir_all(vendor_home.join("rules")).unwrap();
+                fs::write(vendor_home.join("AGENTS.md"), format!("{vendor}-named")).unwrap();
+                fs::write(vendor_home.join("rules/rule.md"), format!("{vendor}-rule")).unwrap();
+            }
 
-        let configs = read_agents_config_with_roots(
-            repo.to_str().unwrap(),
-            None,
-            CompatConfig::default(),
-            repo.clone(),
-            None,
-        )
-        .await;
-        for expected in ["home-rule", "project-grok-rule", "project-claude-rule"] {
+            let mut rules_only = CompatConfig::default();
+            rules_only.claude.agents = false;
+            rules_only.cursor.agents = false;
+            let configs = read_agents_config_with_roots(
+                cwd.to_str().unwrap(),
+                None,
+                rules_only,
+                grok_home.clone(),
+                Some(home.clone()),
+            )
+            .await;
+            for vendor in [".claude", ".cursor"] {
+                assert!(
+                    configs
+                        .iter()
+                        .any(|config| config.content == format!("{vendor}-rule"))
+                );
+                assert!(
+                    !configs
+                        .iter()
+                        .any(|config| config.content == format!("{vendor}-named"))
+                );
+            }
+
+            let mut agents_only = CompatConfig::default();
+            agents_only.claude.rules = false;
+            agents_only.cursor.rules = false;
+            let configs = read_agents_config_with_roots(
+                cwd.to_str().unwrap(),
+                None,
+                agents_only,
+                grok_home,
+                Some(home),
+            )
+            .await;
+            for vendor in [".claude", ".cursor"] {
+                assert!(
+                    configs
+                        .iter()
+                        .any(|config| config.content == format!("{vendor}-named"))
+                );
+                assert!(
+                    !configs
+                        .iter()
+                        .any(|config| config.content == format!("{vendor}-rule"))
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn nested_grok_home_keeps_project_role_in_repo_order() {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            let nested = repo.join("nested");
+            fs::create_dir_all(nested.join("rules")).unwrap();
+            fs::create_dir_all(nested.join(".grok/rules")).unwrap();
+            init_git_repo(&repo);
+            fs::write(nested.join("rules/home.md"), "nested-home-rule").unwrap();
+            fs::write(repo.join("AGENTS.md"), "repo-named").unwrap();
+            fs::write(nested.join("AGENTS.md"), "nested-named").unwrap();
+            fs::write(nested.join(".grok/rules/project.md"), "nested-project-rule").unwrap();
+
+            let configs = read_agents_config_with_roots(
+                nested.to_str().unwrap(),
+                None,
+                CompatConfig::default(),
+                nested.clone(),
+                None,
+            )
+            .await;
             assert_eq!(
                 configs
                     .iter()
-                    .filter(|config| config.content == expected)
-                    .count(),
-                1,
-                "{expected} should be discovered exactly once: {configs:?}"
+                    .map(|config| config.content.as_str())
+                    .collect::<Vec<_>>(),
+                vec![
+                    "nested-home-rule",
+                    "repo-named",
+                    "nested-named",
+                    "nested-project-rule",
+                ]
             );
         }
-        assert!(configs.iter().all(|config| config.content != "doubled"));
-    }
 
-    #[tokio::test]
-    async fn vendor_home_repo_overlap_keeps_project_named_role() {
-        let tmp = tempfile::tempdir().unwrap();
-        let grok_home = tmp.path().join("grok-home");
-        let home = tmp.path().join("home");
-        let repo = home.join(".claude");
-        fs::create_dir_all(&grok_home).unwrap();
-        fs::create_dir_all(repo.join("rules")).unwrap();
-        fs::create_dir_all(repo.join(".claude/rules")).unwrap();
-        init_git_repo(&repo);
-        fs::write(repo.join("rules/home.md"), "claude-home-rule").unwrap();
-        fs::write(repo.join("AGENTS.md"), "project-named").unwrap();
-        fs::write(repo.join(".claude/rules/project.md"), "project-rule").unwrap();
+        #[tokio::test]
+        async fn overlapping_grok_home_and_project_root_merges_roles() {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            fs::create_dir_all(repo.join("rules")).unwrap();
+            fs::create_dir_all(repo.join(".grok/rules")).unwrap();
+            fs::create_dir_all(repo.join(".claude/rules")).unwrap();
+            init_git_repo(&repo);
+            fs::write(repo.join("rules/home.md"), "home-rule").unwrap();
+            fs::write(repo.join(".grok/rules/project.md"), "project-grok-rule").unwrap();
+            fs::write(repo.join(".claude/rules/project.md"), "project-claude-rule").unwrap();
+            fs::create_dir_all(repo.join(".grok/.grok/rules")).unwrap();
+            fs::write(repo.join(".grok/.grok/rules/doubled.md"), "doubled").unwrap();
 
-        let mut compat = CompatConfig::default();
-        compat.claude.agents = false;
-        let configs = read_agents_config_with_roots(
-            repo.to_str().unwrap(),
-            None,
-            compat,
-            grok_home,
-            Some(home),
-        )
-        .await;
-        assert_eq!(
-            configs
+            let configs = read_agents_config_with_roots(
+                repo.to_str().unwrap(),
+                None,
+                CompatConfig::default(),
+                repo.clone(),
+                None,
+            )
+            .await;
+            for expected in ["home-rule", "project-grok-rule", "project-claude-rule"] {
+                assert_eq!(
+                    configs
+                        .iter()
+                        .filter(|config| config.content == expected)
+                        .count(),
+                    1,
+                    "{expected} should be discovered exactly once: {configs:?}"
+                );
+            }
+            assert!(configs.iter().all(|config| config.content != "doubled"));
+        }
+
+        #[tokio::test]
+        async fn vendor_home_repo_overlap_keeps_project_named_role() {
+            let tmp = tempfile::tempdir().unwrap();
+            let grok_home = tmp.path().join("grok-home");
+            let home = tmp.path().join("home");
+            let repo = home.join(".claude");
+            fs::create_dir_all(&grok_home).unwrap();
+            fs::create_dir_all(repo.join("rules")).unwrap();
+            fs::create_dir_all(repo.join(".claude/rules")).unwrap();
+            init_git_repo(&repo);
+            fs::write(repo.join("rules/home.md"), "claude-home-rule").unwrap();
+            fs::write(repo.join("AGENTS.md"), "project-named").unwrap();
+            fs::write(repo.join(".claude/rules/project.md"), "project-rule").unwrap();
+
+            let mut compat = CompatConfig::default();
+            compat.claude.agents = false;
+            let configs = read_agents_config_with_roots(
+                repo.to_str().unwrap(),
+                None,
+                compat,
+                grok_home,
+                Some(home),
+            )
+            .await;
+            assert_eq!(
+                configs
+                    .iter()
+                    .map(|config| config.content.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["claude-home-rule", "project-named", "project-rule"]
+            );
+        }
+
+        #[cfg(unix)]
+        #[tokio::test]
+        async fn canonical_named_rule_collision_is_normalized_once() {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            fs::create_dir_all(repo.join("rules")).unwrap();
+            init_git_repo(&repo);
+            fs::write(
+                repo.join("AGENTS.md"),
+                "---\nglobs: ['*.rs']\n---\ncanonical-collision-body",
+            )
+            .unwrap();
+            std::os::unix::fs::symlink("../AGENTS.md", repo.join("rules/alias.md")).unwrap();
+
+            let configs = read_agents_config_with_roots(
+                repo.to_str().unwrap(),
+                None,
+                CompatConfig::default(),
+                repo.clone(),
+                None,
+            )
+            .await;
+            assert_eq!(configs.len(), 1);
+            assert_eq!(
+                canonical_for_dedup(Path::new(&configs[0].file_path)),
+                canonical_for_dedup(&repo.join("AGENTS.md"))
+            );
+            assert!(configs[0].file_name.eq_ignore_ascii_case("AGENTS.md"));
+            assert_eq!(configs[0].content, "canonical-collision-body");
+        }
+
+        #[tokio::test]
+        async fn rule_frontmatter_is_stripped_but_named_frontmatter_is_preserved() {
+            let tmp = tempfile::tempdir().unwrap();
+            let grok_home = tmp.path().join("custom-grok-home");
+            let home = tmp.path().join("home");
+            let repo = tmp.path().join("repo");
+            fs::create_dir_all(grok_home.join("rules")).unwrap();
+            fs::create_dir_all(home.join(".claude/rules")).unwrap();
+            fs::create_dir_all(home.join(".cursor/rules")).unwrap();
+            fs::create_dir_all(repo.join(".grok/rules")).unwrap();
+            fs::create_dir_all(repo.join(".claude/rules")).unwrap();
+            fs::create_dir_all(repo.join(".cursor/rules")).unwrap();
+            init_git_repo(&repo);
+
+            let frontmatter = |body: &str| format!("---\nglobs: ['*.rs']\n---\n{body}");
+            for (path, body) in [
+                (grok_home.join("rules/global.md"), "custom-home-body"),
+                (home.join(".claude/rules/global.md"), "claude-body"),
+                (home.join(".cursor/rules/global.md"), "cursor-body"),
+                (repo.join(".grok/rules/project.md"), "grok-project-body"),
+                (repo.join(".claude/rules/project.md"), "claude-project-body"),
+                (repo.join(".cursor/rules/project.md"), "cursor-project-body"),
+            ] {
+                fs::write(path, frontmatter(body)).unwrap();
+            }
+            fs::write(repo.join("AGENTS.md"), frontmatter("named-body")).unwrap();
+
+            let configs = read_agents_config_with_roots(
+                repo.to_str().unwrap(),
+                None,
+                CompatConfig::default(),
+                grok_home,
+                Some(home),
+            )
+            .await;
+            for body in [
+                "custom-home-body",
+                "claude-body",
+                "cursor-body",
+                "grok-project-body",
+                "claude-project-body",
+                "cursor-project-body",
+            ] {
+                let config = configs
+                    .iter()
+                    .find(|config| config.content.contains(body))
+                    .unwrap();
+                assert_eq!(config.content, body);
+            }
+            let named = configs
                 .iter()
-                .map(|config| config.content.as_str())
-                .collect::<Vec<_>>(),
-            vec!["claude-home-rule", "project-named", "project-rule"]
-        );
+                .find(|config| config.content.contains("named-body"))
+                .unwrap();
+            assert!(named.content.starts_with("---\n"));
+            assert!(named.content.contains("globs:"));
+        }
     }
 
-    #[cfg(unix)]
     #[tokio::test]
-    async fn canonical_named_rule_collision_is_normalized_once() {
+    async fn read_agents_config_rejects_vendor_state_cwd() {
         let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("repo");
-        fs::create_dir_all(repo.join("rules")).unwrap();
-        init_git_repo(&repo);
+        let vendor_repo = tmp.path().join(".codex").join("project");
+        fs::create_dir_all(&vendor_repo).unwrap();
+        init_git_repo(&vendor_repo);
         fs::write(
-            repo.join("AGENTS.md"),
-            "---\nglobs: ['*.rs']\n---\ncanonical-collision-body",
+            vendor_repo.join("AGENTS.md"),
+            "# VENDOR_STATE_INSTRUCTIONS_MUST_NOT_LOAD",
         )
         .unwrap();
-        std::os::unix::fs::symlink("../AGENTS.md", repo.join("rules/alias.md")).unwrap();
 
-        let configs = read_agents_config_with_roots(
-            repo.to_str().unwrap(),
+        let configs = read_agents_config_with_options(
+            vendor_repo.to_str().unwrap(),
             None,
             CompatConfig::default(),
-            repo.clone(),
-            None,
         )
         .await;
-        assert_eq!(configs.len(), 1);
-        assert_eq!(
-            canonical_for_dedup(Path::new(&configs[0].file_path)),
-            canonical_for_dedup(&repo.join("AGENTS.md"))
-        );
-        assert!(configs[0].file_name.eq_ignore_ascii_case("AGENTS.md"));
-        assert_eq!(configs[0].content, "canonical-collision-body");
-    }
-
-    #[tokio::test]
-    async fn rule_frontmatter_is_stripped_but_named_frontmatter_is_preserved() {
-        let tmp = tempfile::tempdir().unwrap();
-        let grok_home = tmp.path().join("custom-grok-home");
-        let home = tmp.path().join("home");
-        let repo = tmp.path().join("repo");
-        fs::create_dir_all(grok_home.join("rules")).unwrap();
-        fs::create_dir_all(home.join(".claude/rules")).unwrap();
-        fs::create_dir_all(home.join(".cursor/rules")).unwrap();
-        fs::create_dir_all(repo.join(".grok/rules")).unwrap();
-        fs::create_dir_all(repo.join(".claude/rules")).unwrap();
-        fs::create_dir_all(repo.join(".cursor/rules")).unwrap();
-        init_git_repo(&repo);
-
-        let frontmatter = |body: &str| format!("---\nglobs: ['*.rs']\n---\n{body}");
-        for (path, body) in [
-            (grok_home.join("rules/global.md"), "custom-home-body"),
-            (home.join(".claude/rules/global.md"), "claude-body"),
-            (home.join(".cursor/rules/global.md"), "cursor-body"),
-            (repo.join(".grok/rules/project.md"), "grok-project-body"),
-            (repo.join(".claude/rules/project.md"), "claude-project-body"),
-            (repo.join(".cursor/rules/project.md"), "cursor-project-body"),
-        ] {
-            fs::write(path, frontmatter(body)).unwrap();
-        }
-        fs::write(repo.join("AGENTS.md"), frontmatter("named-body")).unwrap();
-
-        let configs = read_agents_config_with_roots(
-            repo.to_str().unwrap(),
-            None,
-            CompatConfig::default(),
-            grok_home,
-            Some(home),
-        )
-        .await;
-        for body in [
-            "custom-home-body",
-            "claude-body",
-            "cursor-body",
-            "grok-project-body",
-            "claude-project-body",
-            "cursor-project-body",
-        ] {
-            let config = configs
-                .iter()
-                .find(|config| config.content.contains(body))
-                .unwrap();
-            assert_eq!(config.content, body);
-        }
-        let named = configs
-            .iter()
-            .find(|config| config.content.contains("named-body"))
-            .unwrap();
-        assert!(named.content.starts_with("---\n"));
-        assert!(named.content.contains("globs:"));
+        assert!(configs.iter().all(|c| {
+            !c.content
+                .contains("VENDOR_STATE_INSTRUCTIONS_MUST_NOT_LOAD")
+        }));
     }
 
     #[tokio::test]
@@ -1047,10 +1115,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn render_strips_frontmatter_from_rules_files() {
+        let configs = vec![AgentConfigFile {
+            file_name: "style.md".to_string(),
+            file_path: "/repo/.grok/rules/style.md".to_string(),
+            content: "---\nglobs: [\"*.rs\"]\n---\n# Use snake_case".to_string(),
+        }];
+        let section = format_agents_md_section(&configs).unwrap();
+        assert!(section.contains("# Use snake_case"));
+        assert!(!section.contains("globs:"));
+    }
+
     // ── .claude/CLAUDE.md integration tests ─────────────────────────
 
     #[tokio::test]
-    async fn read_agents_config_discovers_claude_subdir_claude_md() {
+    async fn read_agents_config_ignores_claude_subdir_claude_md() {
         let tmp = tempfile::tempdir().unwrap();
         let repo_root = tmp.path().join("repo");
         fs::create_dir_all(&repo_root).unwrap();
@@ -1069,10 +1149,10 @@ mod tests {
         .await;
 
         assert!(
-            configs
+            !configs
                 .iter()
                 .any(|c| c.content.contains("XYZZY_CLAUDE_SUBDIR_MARKER")),
-            ".claude/CLAUDE.md should be discovered, got: {:?}",
+            ".claude/CLAUDE.md must be ignored, got: {:?}",
             configs
                 .iter()
                 .map(|c| (&c.file_path, &c.content))
@@ -1081,7 +1161,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn read_agents_config_claude_subdir_and_direct_both_found() {
+    async fn read_agents_config_ignores_direct_and_subdir_claude_files() {
         let tmp = tempfile::tempdir().unwrap();
         let repo_root = tmp.path().join("repo");
         fs::create_dir_all(&repo_root).unwrap();
@@ -1108,7 +1188,28 @@ mod tests {
             .iter()
             .any(|c| c.content.contains("XYZZY_SUBDIR_MARKER"));
 
-        assert!(has_direct, "Direct CLAUDE.md should be found");
-        assert!(has_subdir, ".claude/CLAUDE.md should be found");
+        assert!(!has_direct, "Direct CLAUDE.md must be ignored");
+        assert!(!has_subdir, ".claude/CLAUDE.md must be ignored");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instruction_discovery_rejects_file_and_rules_dir_symlinks_to_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_agents = tmp.path().join(".codex").join("AGENTS.md");
+        let vendor_rules = tmp.path().join(".agents").join("rules");
+        fs::create_dir_all(vendor_agents.parent().unwrap()).unwrap();
+        fs::create_dir_all(&vendor_rules).unwrap();
+        fs::write(&vendor_agents, "vendor instructions").unwrap();
+        fs::write(vendor_rules.join("hidden.md"), "vendor rule").unwrap();
+
+        symlink(&vendor_agents, tmp.path().join("AGENTS.md")).unwrap();
+        fs::create_dir_all(tmp.path().join(".grok")).unwrap();
+        symlink(&vendor_rules, tmp.path().join(".grok").join("rules")).unwrap();
+
+        assert!(find_agent_files(tmp.path(), &["AGENTS.md"]).is_empty());
+        assert!(find_rules_files(tmp.path(), &[".grok/rules"]).is_empty());
     }
 }

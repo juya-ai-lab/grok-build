@@ -185,6 +185,9 @@ pub async fn maybe_upload_index(
     gcs_config: xai_file_utils::TraceExportConfig,
     auth_manager: Option<std::sync::Arc<crate::auth::AuthManager>>,
 ) {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+        return;
+    }
     if !config.enabled {
         return;
     }
@@ -272,6 +275,9 @@ pub async fn maybe_download_index(
     gcs_config: &xai_file_utils::TraceExportConfig,
     auth_manager: Option<std::sync::Arc<crate::auth::AuthManager>>,
 ) -> bool {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+        return false;
+    }
     if !config.enabled {
         return false;
     }

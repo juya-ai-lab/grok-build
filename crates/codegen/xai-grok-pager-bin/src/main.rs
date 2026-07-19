@@ -70,6 +70,13 @@ fn apply_agent_endpoint_args(
 }
 /// Resolve --agent-profile path: canonicalize and verify the file exists.
 fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
+    if xai_grok_config::validate_grok_path(path).is_none() {
+        eprintln!(
+            "error: refusing --agent-profile under Claude/Codex vendor state: {}",
+            path.display()
+        );
+        std::process::exit(1);
+    }
     match dunce::canonicalize(path) {
         Ok(abs) if abs.is_file() => abs,
         Ok(abs) => {
