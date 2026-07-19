@@ -810,10 +810,7 @@ mod tests {
                 ForeignSessionTool::Cursor,
                 ForeignSessionSource::CursorDesktop,
             ),
-            (
-                ForeignSessionTool::Cursor,
-                ForeignSessionSource::CursorCli,
-            ),
+            (ForeignSessionTool::Cursor, ForeignSessionSource::CursorCli),
             (ForeignSessionTool::Claude, ForeignSessionSource::ClaudeCode),
             (ForeignSessionTool::Codex, ForeignSessionSource::CodexCli),
         ] {

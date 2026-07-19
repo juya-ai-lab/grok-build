@@ -343,9 +343,7 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
         hit!("lsp");
     }
     // Cursor MCP compatibility is build-disabled; never probe its state.
-    if xai_grok_config::CURSOR_COMPAT_ENABLED
-        && cwd.join(".cursor").join("mcp.json").is_file()
-    {
+    if xai_grok_config::CURSOR_COMPAT_ENABLED && cwd.join(".cursor").join("mcp.json").is_file() {
         hit!("mcp");
     }
     // Project `.envrc` — auto-sourced in a bash subshell when `direnv` isn't

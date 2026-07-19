@@ -556,10 +556,7 @@ mod tests {
         }
         let claude_env = Some(custom_claude.clone().into_os_string());
 
-        for path in [
-            custom_claude.join("grok"),
-            default_claude.join("grok"),
-        ] {
+        for path in [custom_claude.join("grok"), default_claude.join("grok")] {
             assert_eq!(
                 validate_grok_path_with(&path, Some(&user_home), None, claude_env.clone(),),
                 None
@@ -656,12 +653,7 @@ mod tests {
             None
         );
         assert_eq!(
-            validate_skill_path_with(
-                &standard_agents_skills,
-                Some(&user_home),
-                None,
-                None,
-            ),
+            validate_skill_path_with(&standard_agents_skills, Some(&user_home), None, None,),
             Some(standard_agents_skills)
         );
     }

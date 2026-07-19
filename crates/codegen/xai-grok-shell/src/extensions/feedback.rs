@@ -81,9 +81,7 @@ async fn handle_btw(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 
 async fn handle_feedback(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     if !agent.cfg.borrow().is_feedback_enabled() {
-        return Err(acp::Error::internal_error().data(
-            "Feedback is disabled in this build.",
-        ));
+        return Err(acp::Error::internal_error().data("Feedback is disabled in this build."));
     }
 
     match args.method.as_ref() {
@@ -360,9 +358,9 @@ async fn handle_feedback(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult 
 /// - `x.ai/review/comment/delete`: record a tombstone event for a deleted comment
 async fn handle_review(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
-        return Err(acp::Error::internal_error().data(
-            "Review event uploads are disabled in this build.",
-        ));
+        return Err(
+            acp::Error::internal_error().data("Review event uploads are disabled in this build.")
+        );
     }
 
     match args.method.as_ref() {

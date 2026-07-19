@@ -63,7 +63,10 @@ fn seed_fixtures(home: &Path, cwd: &Path) {
     write_skill(home, ".cursor", "my-cursor-skill", MARKER_CURSOR_SKILL);
     write_skill(home, ".claude", "my-claude-skill", MARKER_CLAUDE_SKILL);
     write_file(
-        &home.join(".agents").join("commands").join("standard-command.md"),
+        &home
+            .join(".agents")
+            .join("commands")
+            .join("standard-command.md"),
         &format!(
             "---\nname: standard-command\ndescription: {MARKER_AGENTS_COMMAND}\n---\n\nCommand body.\n"
         ),

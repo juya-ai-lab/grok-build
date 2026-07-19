@@ -60,19 +60,13 @@ impl<'de> serde::Deserialize<'de> for HookEventName {
             "SessionStart" | "session_start" => Ok(Self::SessionStart),
             "PreToolUse" | "pre_tool_use" => Ok(Self::PreToolUse),
             "PostToolUse" | "post_tool_use" => Ok(Self::PostToolUse),
-            "PostToolUseFailure" | "post_tool_use_failure" => {
-                Ok(Self::PostToolUseFailure)
-            }
+            "PostToolUseFailure" | "post_tool_use_failure" => Ok(Self::PostToolUseFailure),
             "SessionEnd" | "session_end" => Ok(Self::SessionEnd),
             "Stop" | "stop" => Ok(Self::Stop),
             "StopFailure" | "stop_failure" => Ok(Self::StopFailure),
             "Notification" | "notification" => Ok(Self::Notification),
-            "UserPromptSubmit" | "user_prompt_submit" => {
-                Ok(Self::UserPromptSubmit)
-            }
-            "PermissionDenied" | "permission_denied" => {
-                Ok(Self::PermissionDenied)
-            }
+            "UserPromptSubmit" | "user_prompt_submit" => Ok(Self::UserPromptSubmit),
+            "PermissionDenied" | "permission_denied" => Ok(Self::PermissionDenied),
             "SubagentStart" | "subagent_start" => Ok(Self::SubagentStart),
             "SubagentStop" | "subagent_stop" => Ok(Self::SubagentStop),
             "SubagentEnd" | "subagent_end" => Ok(Self::SubagentEnd),
