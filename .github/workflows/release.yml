@@ -132,9 +132,11 @@ jobs:
     env:
       # Compile cache shared across release runs (sccache, GHA backend).
       # Per-target keys avoid matrix-leg write races; the repo-wide GHA cache
-      # is 10 GB, so stale entries are evicted LRU.
+      # is 10 GB, so stale entries are evicted LRU. 1.5 GB per target keeps
+      # the six caches within the repo limit and bounds runner disk usage.
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_CACHE_SIZE: "1536"
       SCCACHE_GHA_CACHE_TO: sccache-${{ matrix.target }}
       SCCACHE_GHA_CACHE_FROM: sccache-${{ matrix.target }}
     strategy:
