@@ -16,9 +16,10 @@
 # Trigger:
 #   1) git tag v0.2.116 && git push origin v0.2.116  (automatic)
 #   2) Actions tab -> Release -> Run workflow -> optionally enter a tag -> run
-#      (web-only path; no git client needed. Leave the tag empty to auto-use
-#      the latest v* tag. The release API creates the tag at the built commit,
-#      and GITHUB_TOKEN-created refs do not re-trigger the push workflow.)
+#      (web-only path; no git client needed. Leave the tag empty to derive it
+#      from crates/codegen/xai-grok-version/Cargo.toml. The release API
+#      creates the tag at the built commit, and GITHUB_TOKEN-created refs do
+#      not re-trigger the push workflow.)
 
 name: Release
 
@@ -29,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and publish (e.g. v0.2.116). Leave empty to auto-use the latest v* tag."
+        description: "Release tag to build and publish (e.g. v0.2.116). Leave empty to use the version from xai-grok-version/Cargo.toml."
         required: false
         type: string
 
@@ -108,17 +109,16 @@ jobs:
           else
             tag="${{ inputs.tag }}"
             if [ -z "$tag" ]; then
-              # Web-only convenience: use the newest v* tag automatically.
-              tag="$(git ls-remote --tags origin 'refs/tags/v*' \
-                | sed -n 's#.*refs/tags/##p' \
-                | sed 's/\^{}$//' \
-                | sort -V \
-                | tail -1)"
-              if [ -z "$tag" ]; then
-                echo "No v* tag found; enter a tag in the workflow inputs." >&2
+              # Web-only convenience: derive the release tag from the crate
+              # version, so a new tag/release is created at the built commit.
+              version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' \
+                crates/codegen/xai-grok-version/Cargo.toml | head -1)"
+              if [ -z "$version" ]; then
+                echo "Could not read version from crates/codegen/xai-grok-version/Cargo.toml; enter a tag in the workflow inputs." >&2
                 exit 1
               fi
-              echo "Manual run: auto-resolved latest tag = $tag"
+              tag="v${version}"
+              echo "Manual run: derived tag from xai-grok-version/Cargo.toml = $tag"
             else
               echo "Manual run: tag input = $tag"
             fi
