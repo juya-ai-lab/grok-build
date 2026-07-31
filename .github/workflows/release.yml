@@ -170,6 +170,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Cache protoc
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/protoc-*
+          key: protoc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/protoc') }}
+
       - name: Setup protoc + Rust
         uses: ./.github/actions/setup-build
         with:

@@ -138,7 +138,20 @@ dest="${RUNNER_TEMP}/protoc-${version}"
 # Normalize path separators for mixed Windows/bash environments.
 dest="${dest//\\//}"
 mkdir -p "$dest"
+
+# Cache-hit fast path: actions/cache restores this directory; skip the
+# download + verify + extract cycle when the binary is already present.
+existing_bin=""
+for candidate in "${dest}/${zip_inner}" "${dest}/bin/protoc" "${dest}/bin/protoc.exe"; do
+  candidate="${candidate//\\//}"
+  if [[ -f "$candidate" ]]; then
+    existing_bin="$candidate"
+    break
+  fi
+done
+
 asset="$(basename "$url")"
+if [[ -z "$existing_bin" ]]; then
 echo "Installing protoc v${version} from bin/protoc -> ${url}" >&2
 
 # Download via Python first (portable; avoids Git-Bash curl + CRLF URL issues on
@@ -198,6 +211,9 @@ if [[ ! -f "$protoc_bin" ]]; then
   exit 1
 fi
 chmod +x "$protoc_bin" 2>/dev/null || true
+else
+  protoc_bin="$existing_bin"
+fi
 
 protoc_bin_env="${protoc_bin//\\//}"
 bin_dir="$(dirname "$protoc_bin_env")"
