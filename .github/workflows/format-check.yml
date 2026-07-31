@@ -48,13 +48,15 @@ jobs:
         id: cache-toolchain
         with:
           path: ~/.rustup
-          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.92.0
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
+          restore-keys: |
+            rustup-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install Rust Toolchain
+        # Channel follows rust-toolchain.toml automatically (dtolnay action
+        # reads it when `toolchain` is omitted); no manual sync needed.
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
-          # Keep in sync with rust-toolchain.toml.
-          toolchain: "1.92.0"
           components: rustfmt
 
       - name: Verify Code Formatting
@@ -66,4 +68,4 @@ jobs:
         uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         with:
           path: ~/.rustup
-          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.92.0
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}

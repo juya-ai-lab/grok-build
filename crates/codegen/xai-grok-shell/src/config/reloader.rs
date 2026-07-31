@@ -181,9 +181,8 @@ impl ConfigReloader {
             }
 
             // NB: the legacy fall-through that emitted a unit
-            // `McpServersChanged` for any project `.mcp.json` /
-            // `.claude.json` change is replaced by the
-            // per-cwd fan-out below — `collect_project_cwds` already
+            // `McpServersChanged` for any project `.mcp.json` change
+            // is replaced by the per-cwd fan-out below — `collect_project_cwds` already
             // includes every `McpConfigChanged` path in `project_cwds`,
             // so a separate emit here would double-dispatch. Global
             // `[mcp_servers]` edits are dispatched inside `reload_config`.
@@ -378,7 +377,6 @@ impl ConfigReloader {
 /// |----------------------------|-------------------------|-------------------|
 /// | `ProjectConfigChanged`     | `<cwd>/.grok/config.toml` | `<cwd>`           |
 /// | `McpConfigChanged`         | `<cwd>/.mcp.json`         | `<cwd>`           |
-/// | `McpConfigChanged`         | `<cwd>/.claude.json`      | `<cwd>`           |
 ///
 /// Order-preserving de-dup (a `Vec` rather than a `HashSet`) so the
 /// downstream emit order is deterministic in tests.
@@ -393,7 +391,7 @@ fn collect_project_cwds(batch: &[ConfigChangeEvent]) -> Vec<PathBuf> {
                     .map(|p| p.to_path_buf())
             }
             ConfigChangeEvent::McpConfigChanged { path } => {
-                // <cwd>/.mcp.json or <cwd>/.claude.json → <cwd>
+                // <cwd>/.mcp.json → <cwd>
                 path.parent().map(|p| p.to_path_buf())
             }
             _ => None,
