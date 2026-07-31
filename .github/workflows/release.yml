@@ -15,6 +15,8 @@
 #
 # Trigger:
 #   git tag v0.2.105 && git push origin v0.2.105
+#   or run manually from the Actions tab (re-builds and attaches assets to the
+#   most recent v* release tag; a tag push still runs the normal path).
 
 name: Release
 
@@ -22,6 +24,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -89,11 +92,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Resolve version from tag
+      - name: Resolve version
         id: ver
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            # Manual dispatch: re-build/attach to the most recent release tag.
+            tag="$(git tag --list 'v*' | sort -V | tail -1)"
+            if [ -z "$tag" ]; then
+              echo "No v* tag found; create a tag first (e.g. v0.2.116)." >&2
+              exit 1
+            fi
+            echo "Manual run: using latest tag $tag"
+          fi
           version="${tag#v}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
             echo "Invalid version tag: $tag (expected vX.Y.Z or vX.Y.Z-suffix)" >&2
@@ -232,7 +245,7 @@ jobs:
     # Skip only if the whole run was cancelled or nothing reached upload.
     if: >-
       always()
-      && startsWith(github.ref, 'refs/tags/v')
+      && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
       && !cancelled()
       && needs.build.result != 'cancelled'
 
@@ -305,8 +318,8 @@ jobs:
         if: steps.assets.outputs.has_assets == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: v${{ steps.ver.outputs.version }}
           generate_release_notes: true
           # Re-running / partial matrices should attach newly built assets.
           fail_on_unmatched_files: false
