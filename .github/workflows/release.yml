@@ -17,9 +17,9 @@
 #   1) git tag v0.2.116 && git push origin v0.2.116  (automatic)
 #   2) Actions tab -> Release -> Run workflow -> optionally enter a tag -> run
 #      (web-only path; no git client needed. Leave the tag empty to derive it
-#      from crates/codegen/xai-grok-version/Cargo.toml. The release API
-#      creates the tag at the built commit, and GITHUB_TOKEN-created refs do
-#      not re-trigger the push workflow.)
+#      from the version crate manifest (VERSION_CRATE_MANIFEST). The release
+#      API creates the tag at the built commit, and GITHUB_TOKEN-created refs
+#      do not re-trigger the push workflow.)
 
 name: Release
 
@@ -30,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to build and publish (e.g. v0.2.116). Leave empty to use the version from xai-grok-version/Cargo.toml."
+        description: "Release tag to build and publish (e.g. v0.2.116). Leave empty to use the version from the version crate."
         required: false
         type: string
 
@@ -48,6 +48,10 @@ env:
   # Primary crate / binary produced by this workflow (single source of truth).
   RELEASE_PACKAGE: xai-grok-pager-bin
   RELEASE_BIN: xai-grok-pager
+  # Crate manifest carrying the lockstepped CLI version. The manual web-only
+  # release path derives the tag from it when the tag input is empty; update
+  # this path if upstream relocates the version crate.
+  VERSION_CRATE_MANIFEST: crates/codegen/xai-grok-version/Cargo.toml
   CARGO_CACHE_SHARED_KEY: release-shared
 
 jobs:
@@ -112,13 +116,13 @@ jobs:
               # Web-only convenience: derive the release tag from the crate
               # version, so a new tag/release is created at the built commit.
               version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' \
-                crates/codegen/xai-grok-version/Cargo.toml | head -1)"
+                "$VERSION_CRATE_MANIFEST" | head -1)"
               if [ -z "$version" ]; then
-                echo "Could not read version from crates/codegen/xai-grok-version/Cargo.toml; enter a tag in the workflow inputs." >&2
+                echo "Could not read version from $VERSION_CRATE_MANIFEST; enter a tag in the workflow inputs." >&2
                 exit 1
               fi
               tag="v${version}"
-              echo "Manual run: derived tag from xai-grok-version/Cargo.toml = $tag"
+              echo "Manual run: derived tag from version crate = $tag"
             else
               echo "Manual run: tag input = $tag"
             fi
