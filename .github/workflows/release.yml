@@ -1,0 +1,315 @@
+# Build release-dist binaries for all supported platforms and attach them
+# to a GitHub Release when a version tag is pushed.
+#
+# Flow:
+#   build × 6 (parallel, fail-fast: false) → publish whatever succeeded
+#
+# A platform that finishes the full build/package/upload path is published
+# even if other matrix legs fail. Lint gates belong on PR CI, not here.
+#
+# Asset naming matches the official install/update convention used by
+# install.sh and xai-grok-update (gh-release path):
+#   grok-{version}-{os}-{arch}[.exe]
+#   os   ∈ macos | linux | windows
+#   arch ∈ x86_64 | aarch64
+#
+# Trigger:
+#   git tag v0.2.105 && git push origin v0.2.105
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  SYSTEM_DEPS_DAV1D_BUILD_INTERNAL: auto
+  # Primary crate / binary produced by this workflow (single source of truth).
+  RELEASE_PACKAGE: xai-grok-pager-bin
+  RELEASE_BIN: xai-grok-pager
+  CARGO_CACHE_SHARED_KEY: release-shared
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            exe_suffix: ""
+            can_run: true
+
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            exe_suffix: ""
+            can_run: true
+
+          - platform: macos-aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            exe_suffix: ""
+            can_run: true
+
+          # Cross-compile Intel macOS from Apple Silicon (no Rosetta needed to link).
+          - platform: macos-x86_64
+            runner: macos-14
+            target: x86_64-apple-darwin
+            exe_suffix: ""
+            can_run: false
+
+          - platform: windows-x86_64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            exe_suffix: ".exe"
+            can_run: true
+
+          - platform: windows-aarch64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            exe_suffix: ".exe"
+            can_run: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve version from tag
+        id: ver
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
+            echo "Invalid version tag: $tag (expected vX.Y.Z or vX.Y.Z-suffix)" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved GROK_VERSION=$version"
+
+      - name: Setup protoc + Rust
+        uses: ./.github/actions/setup-build
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+          # Only cache registry/git — full target/ restores spike disk on LTO builds.
+          cache-targets: false
+          cache-on-failure: true
+          shared-key: ${{ env.CARGO_CACHE_SHARED_KEY }}
+
+      - name: Build release-dist binary
+        shell: bash
+        env:
+          GROK_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          df -h . || df -h || true
+
+          # Portable Linux aarch64: override monorepo Graviton-oriented flags.
+          # .cargo/config.toml sets target-cpu=neoverse-v2 and jemalloc lg-page=16
+          # (64 KiB pages) for internal fleets — wrong for general distribution.
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=generic -C force-unwind-tables=yes"
+            export AARCH64_UNKNOWN_LINUX_GNU_JEMALLOC_SYS_WITH_LG_PAGE="12"
+          fi
+
+          cargo build \
+            -p "${RELEASE_PACKAGE}" \
+            --profile release-dist \
+            --features release-dist \
+            --target "${{ matrix.target }}"
+
+          echo "--- disk after build ---"
+          df -h . || df -h || true
+          du -sh target 2>/dev/null || true
+
+      - name: Package artifact
+        id: pkg
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+          EXE_SUFFIX: ${{ matrix.exe_suffix }}
+        run: |
+          set -euo pipefail
+
+          src="target/${TARGET}/release-dist/${RELEASE_BIN}${EXE_SUFFIX}"
+          if [ ! -f "$src" ]; then
+            echo "Missing build output: $src" >&2
+            ls -la "target/${TARGET}/release-dist/" || true
+            exit 1
+          fi
+
+          # Strip debug info for distribution size (profile keeps symbols intentionally).
+          case "${{ runner.os }}" in
+            Linux)
+              strip --strip-unneeded "$src" || strip "$src" || true
+              ;;
+            macOS)
+              strip -x "$src" || strip "$src" || true
+              ;;
+            Windows)
+              ;;
+          esac
+
+          asset="grok-${VERSION}-${PLATFORM}${EXE_SUFFIX}"
+          mkdir -p dist
+          cp "$src" "dist/${asset}"
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x "dist/${asset}"
+          fi
+
+          ls -lh "dist/${asset}"
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+          echo "asset_path=dist/${asset}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test (--version)
+        if: matrix.can_run
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          bin="${{ steps.pkg.outputs.asset_path }}"
+          out="$("$bin" --version </dev/null 2>&1)" || {
+            echo "Binary failed to execute: $bin" >&2
+            exit 1
+          }
+          echo "$out"
+          if ! grep -Fq "$VERSION" <<<"$out"; then
+            echo "Warning: --version output did not contain '$VERSION'" >&2
+            echo "Continuing — binary still packaged." >&2
+          fi
+
+      - name: Drop cargo target directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d target ]; then
+            du -sh target || true
+            rm -rf target
+            echo "Removed target/"
+          fi
+          echo "--- disk after dropping target/ ---"
+          df -h . || df -h || true
+          ls -lh dist/ || true
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: binary-${{ matrix.platform }}
+          path: ${{ steps.pkg.outputs.asset_path }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Publish any successful platform artifacts even when other matrix legs fail.
+    # Skip only if the whole run was cancelled or nothing reached upload.
+    if: >-
+      always()
+      && startsWith(github.ref, 'refs/tags/v')
+      && !cancelled()
+      && needs.build.result != 'cancelled'
+
+    steps:
+      - name: Resolve version from tag
+        id: ver
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download successful binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: binary-*
+          path: artifacts
+          merge-multiple: true
+          # OK if some platforms never uploaded; we publish what exists.
+          if-no-files-found: warn
+
+      - name: Collect assets and checksums
+        id: assets
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cd artifacts
+
+          expected=(
+            "grok-${VERSION}-linux-x86_64"
+            "grok-${VERSION}-linux-aarch64"
+            "grok-${VERSION}-macos-x86_64"
+            "grok-${VERSION}-macos-aarch64"
+            "grok-${VERSION}-windows-x86_64.exe"
+            "grok-${VERSION}-windows-aarch64.exe"
+          )
+
+          present=()
+          missing=()
+          for f in "${expected[@]}"; do
+            if [ -f "$f" ]; then
+              ls -lh "$f"
+              present+=("$f")
+            else
+              echo "missing (skip): $f" >&2
+              missing+=("$f")
+            fi
+          done
+
+          if [ "${#present[@]}" -eq 0 ]; then
+            echo "No platform binaries were uploaded; nothing to publish." >&2
+            find . -type f -ls >&2 || true
+            echo "has_assets=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          sha256sum "${present[@]}" | tee SHA256SUMS
+          echo "---- present (${#present[@]}/6) ----"
+          printf '%s\n' "${present[@]}"
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "---- missing (not published this run) ----"
+            printf '%s\n' "${missing[@]}"
+          fi
+          echo "has_assets=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        if: steps.assets.outputs.has_assets == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          # Re-running / partial matrices should attach newly built assets.
+          fail_on_unmatched_files: false
+          files: |
+            artifacts/grok-*
+            artifacts/SHA256SUMS
