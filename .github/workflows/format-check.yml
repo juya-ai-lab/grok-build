@@ -52,11 +52,24 @@ jobs:
           restore-keys: |
             rustup-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: Resolve Toolchain from rust-toolchain.toml
+        id: toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel=$(python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+          data = tomllib.loads(Path("rust-toolchain.toml").read_text(encoding="utf-8"))
+          print(data["toolchain"]["channel"])
+          PY
+          )
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust Toolchain
-        # Channel follows rust-toolchain.toml automatically (dtolnay action
-        # reads it when `toolchain` is omitted); no manual sync needed.
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt
 
       - name: Verify Code Formatting
