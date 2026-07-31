@@ -1,8 +1,8 @@
-# Lightweight pre-release gate: Linux x86_64 only, fmt + single-package
-# check with sccache reuse. Deliberately NOT a full workspace check/clippy
-# run; keep this cheap enough to run on every push/PR.
+# Formatting gate: fast, single-platform check that catches rustfmt drift
+# before release. Deliberately no cargo check/clippy here — those are heavy
+# and are run manually when needed.
 
-name: Check
+name: CI Format Check
 
 on:
   push:
@@ -14,56 +14,21 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: fmt + check (linux x86_64)
+  format:
+    name: Verify code formatting
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      # Separate, smaller cache so the check workflow never evicts the
-      # release build caches.
-      SCCACHE_GHA_CACHE_SIZE: "1024"
-      SCCACHE_GHA_CACHE_TO: sccache-check-x86_64-unknown-linux-gnu
-      SCCACHE_GHA_CACHE_FROM: sccache-check-x86_64-unknown-linux-gnu
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Cache protoc
-        uses: actions/cache@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          path: ${{ runner.temp }}/protoc-*
-          key: protoc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/protoc') }}
+          # Keep in sync with rust-toolchain.toml.
+          toolchain: "1.92.0"
+          components: rustfmt
 
-      - name: Setup protoc + Rust
-        uses: ./.github/actions/setup-build
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-targets: false
-          cache-on-failure: true
-          # Same registry/git cache as the release workflow.
-          shared-key: release-shared
-
-      - name: cargo fmt --check
+      - name: Check formatting (cargo fmt --all --check)
         shell: bash
         run: cargo fmt --all --check
-
-      - name: cargo check (release-dist features)
-        shell: bash
-        run: cargo check -p xai-grok-pager-bin --features release-dist --target x86_64-unknown-linux-gnu
-
-      - name: Show sccache stats
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "${SCCACHE_PATH:-}" ]; then
-            "${SCCACHE_PATH}" --show-stats
-          else
-            sccache --show-stats 2>/dev/null || echo "sccache not available"
-          fi
