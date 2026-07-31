@@ -46,10 +46,50 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install actionlint
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
+      - name: Restore Pip Cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cache-pip
         with:
-          tool: actionlint
+          path: ~/.cache/pip
+          key: lint-pip-${{ runner.os }}
+
+      - name: Restore Cargo-Deny Data Cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cache-deny
+        with:
+          path: |
+            ~/.cargo/advisory-dbs
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: lint-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            lint-cargo-${{ runner.os }}-
+
+      - name: Restore Actionlint Cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cache-actionlint
+        with:
+          path: ~/.local/bin/actionlint
+          key: actionlint-${{ runner.os }}-1.7.12
+
+      - name: Install actionlint
+        shell: bash
+        run: |
+          # taiki-e/install-action does not support actionlint (not on
+          # crates.io / its release manifests), so fetch the official
+          # release and verify its checksum. Bump the pinned version here.
+          if [ ! -x "$HOME/.local/bin/actionlint" ]; then
+            mkdir -p "$HOME/.local/bin"
+            curl -fsSL -o /tmp/actionlint_1.7.12_linux_amd64.tar.gz \
+              https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+            curl -fsSL -o /tmp/actionlint.checksums \
+              https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_checksums.txt
+            cd /tmp
+            grep "actionlint_1.7.12_linux_amd64.tar.gz" actionlint.checksums | sha256sum -c -
+            tar -xzf actionlint_1.7.12_linux_amd64.tar.gz -C "$HOME/.local/bin" actionlint
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          actionlint --version
 
       - name: Run actionlint
         shell: bash
@@ -71,3 +111,27 @@ jobs:
       - name: Run cargo-deny
         shell: bash
         run: cargo deny check
+
+      - name: Save Pip Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-pip.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/pip
+          key: lint-pip-${{ runner.os }}
+
+      - name: Save Cargo-Deny Data Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-deny.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/advisory-dbs
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: lint-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Save Actionlint Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-actionlint.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.local/bin/actionlint
+          key: actionlint-${{ runner.os }}-1.7.12

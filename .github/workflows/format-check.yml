@@ -43,6 +43,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Restore Rust Toolchain Cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: cache-toolchain
+        with:
+          path: ~/.rustup
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.92.0
+
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
@@ -53,3 +60,10 @@ jobs:
       - name: Verify Code Formatting
         shell: bash
         run: cargo fmt --all --check
+
+      - name: Save Rust Toolchain Cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cache-toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.rustup
+          key: rustup-${{ runner.os }}-${{ runner.arch }}-1.92.0
