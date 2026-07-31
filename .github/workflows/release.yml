@@ -38,7 +38,7 @@ on:
 
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.inputs.tag || github.ref }}
   cancel-in-progress: true
 
 env:

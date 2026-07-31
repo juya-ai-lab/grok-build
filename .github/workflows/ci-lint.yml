@@ -97,7 +97,7 @@ jobs:
 
       - name: Install zizmor
         shell: bash
-        run: python3 -m pip install --break-system-packages --quiet zizmor
+        run: python3 -m pip install --break-system-packages --quiet "zizmor==1.28.0"
 
       - name: Run zizmor
         shell: bash
@@ -107,6 +107,7 @@ jobs:
         uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
         with:
           tool: cargo-deny
+          version: 0.20.2
 
       - name: Run cargo-deny
         shell: bash
