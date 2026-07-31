@@ -1675,8 +1675,7 @@ mod tests {
 
         let mut def = AgentDefinition::default_grok_build();
         def.prompt_body = Some("Body ${GROK_PLUGIN_ROOT}/x".to_string());
-        def.system_prompt =
-            TemplateOverride::Custom("Data at ${GROK_PLUGIN_DATA}/db".to_string());
+        def.system_prompt = TemplateOverride::Custom("Data at ${GROK_PLUGIN_DATA}/db".to_string());
 
         substitute_plugin_vars(&mut def, plugin);
 

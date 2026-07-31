@@ -480,8 +480,7 @@ fn cli_agents_reserve_exact_codex_name_only() {
     assert!(error.to_string().contains("reserved and build-disabled"));
 
     let agents =
-        super::parse_cli_agents(r#"{"codex-helper":{"description":"ordinary helper"}}"#)
-            .unwrap();
+        super::parse_cli_agents(r#"{"codex-helper":{"description":"ordinary helper"}}"#).unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].name, "codex-helper");
 }

@@ -484,13 +484,13 @@ fn watch_skill_subdirs(
             Err(e) => log_watch_error(&e, "failed to watch Agent Skills root"),
         }
     } else {
-    match debouncer
-        .watcher()
-        .watch(config_dir, RecursiveMode::NonRecursive)
-    {
-        Ok(()) => watched += 1,
-        Err(error) => log_watch_error(&error, "failed to watch config dir root"),
-    }
+        match debouncer
+            .watcher()
+            .watch(config_dir, RecursiveMode::NonRecursive)
+        {
+            Ok(()) => watched += 1,
+            Err(error) => log_watch_error(&error, "failed to watch config dir root"),
+        }
     }
     for (subdir, mode) in [
         ("skills", RecursiveMode::Recursive),
