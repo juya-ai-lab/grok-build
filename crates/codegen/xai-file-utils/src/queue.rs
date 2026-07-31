@@ -2343,6 +2343,12 @@ fn cleanup_queue_dir(queue_dir: &Path, max_age: Duration, stats: Option<&UploadQ
         Ok(e) => e.flatten().collect(),
         Err(_) => return 0,
     };
+    // Process temp files before their sidecars so a matched pair's age is
+    // evaluated from the sidecar while it still exists. Without this, an
+    // expired pair can lose the sidecar first and the temp then falls back to
+    // a fresh mtime and survives (read_dir order is filesystem-dependent).
+    let mut entries = entries;
+    entries.sort_by_key(|entry| entry.file_name());
     let all_names: HashSet<std::ffi::OsString> = entries.iter().map(|e| e.file_name()).collect();
     let mut cleaned = 0u64;
     let mut cleaned_bytes = 0u64;

@@ -29,6 +29,10 @@ pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
 }
 
 async fn handle_share_session(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+        return Err(acp::Error::invalid_params()
+            .data("Session sharing is build-disabled because content uploads are disabled."));
+    }
     let request: ShareSessionRequest = parse_params(args)?;
 
     // Get auth - required for sharing.
