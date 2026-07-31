@@ -219,6 +219,16 @@ jobs:
           df -h . || df -h || true
           du -sh target 2>/dev/null || true
 
+      - name: Show sccache stats
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${SCCACHE_PATH:-}" ]; then
+            "${SCCACHE_PATH}" --show-stats
+          else
+            sccache --show-stats 2>/dev/null || echo "sccache not available"
+          fi
+
       - name: Package artifact
         id: pkg
         shell: bash
