@@ -212,11 +212,13 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "SCCACHE_GHA_CACHE_SIZE=1024" >> "$GITHUB_ENV"
-          echo "SCCACHE_GHA_CACHE_TO=sccache-${{ matrix.target }}" >> "$GITHUB_ENV"
-          echo "SCCACHE_GHA_CACHE_FROM=sccache-${{ matrix.target }}" >> "$GITHUB_ENV"
+          {
+            echo "RUSTC_WRAPPER=sccache"
+            echo "SCCACHE_GHA_ENABLED=true"
+            echo "SCCACHE_GHA_CACHE_SIZE=1024"
+            echo "SCCACHE_GHA_CACHE_TO=sccache-${{ matrix.target }}"
+            echo "SCCACHE_GHA_CACHE_FROM=sccache-${{ matrix.target }}"
+          } >> "$GITHUB_ENV"
 
       - name: Cache Cargo Registry
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
