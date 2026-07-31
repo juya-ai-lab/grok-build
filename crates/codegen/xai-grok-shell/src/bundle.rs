@@ -89,6 +89,16 @@ pub fn bundled_root() -> PathBuf {
 
 pub fn read_cached_manifest(root: &Path) -> Result<Option<BundleManifest>> {
     let manifest_path = manifest_path(root);
+    if xai_grok_config::validate_grok_path(&manifest_path).is_none() {
+        return Err(std::io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "refusing bundle manifest under Claude/Codex vendor state: {}",
+                manifest_path.display()
+            ),
+        )
+        .into());
+    }
     let bytes = match std::fs::read(&manifest_path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -264,6 +274,12 @@ pub fn checksum_bytes(bytes: &[u8]) -> String {
 }
 
 pub fn checksum_file(path: &Path) -> Result<String> {
+    if xai_grok_config::validate_grok_path(path).is_none() {
+        bail!(
+            "refusing bundle checksum read under Claude/Codex vendor state: {}",
+            path.display()
+        );
+    }
     let bytes = std::fs::read(path)
         .with_context(|| format!("failed to read {} for checksum", path.display()))?;
     Ok(checksum_bytes(&bytes))
@@ -313,6 +329,12 @@ fn manifest_path(root: &Path) -> PathBuf {
 }
 
 fn checksum_file_if_exists(path: &Path) -> Result<Option<String>> {
+    if xai_grok_config::validate_grok_path(path).is_none() {
+        bail!(
+            "refusing bundle checksum read under Claude/Codex vendor state: {}",
+            path.display()
+        );
+    }
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(checksum_bytes(&bytes))),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -523,6 +545,41 @@ mod tests {
             "instructions = \"hello\""
         );
         assert_eq!(read_cached_manifest(&root).unwrap(), Some(manifest));
+    }
+
+    #[test]
+    fn cached_manifest_rejects_literal_vendor_state() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join(".claude").join("bundled");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(MANIFEST_FILE_NAME),
+            r#"{"version":"canary","checksums":{}}"#,
+        )
+        .unwrap();
+
+        let error = read_cached_manifest(&root).expect_err("vendor path must fail closed");
+        assert!(error.to_string().contains("refusing bundle manifest"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cached_manifest_rejects_symlink_into_vendor_state() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        let vendor_root = tmp.path().join(".codex").join("bundled");
+        std::fs::create_dir_all(&vendor_root).unwrap();
+        std::fs::write(
+            vendor_root.join(MANIFEST_FILE_NAME),
+            r#"{"version":"canary","checksums":{}}"#,
+        )
+        .unwrap();
+        let alias = tmp.path().join("bundled-alias");
+        symlink(&vendor_root, &alias).unwrap();
+
+        let error = read_cached_manifest(&alias).expect_err("vendor symlink must fail closed");
+        assert!(error.to_string().contains("refusing bundle manifest"));
     }
 
     #[test]

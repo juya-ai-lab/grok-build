@@ -403,7 +403,8 @@ fn compute_from_inputs(
 ///
 /// Sources: project `.grok/config.toml [mcp_servers]` (NOT the user-tier global
 /// config), project `.mcp.json` (`cwd` up to the repo root, never `$HOME`),
-/// project `.cursor/mcp.json`, and `~/.claude.json projects.<cwd>.mcpServers`.
+/// and `~/.claude.json projects.<cwd>.mcpServers`. Cursor MCP compatibility is
+/// build-disabled.
 ///
 /// Edge case: a name declared in BOTH a project config and the global
 /// `~/.grok/config.toml` is dropped when untrusted. This is intended — untrusted
@@ -424,11 +425,11 @@ pub fn project_scoped_mcp_names(cwd: &Path) -> HashSet<String> {
         names.insert(mcp_server_name(&server).to_string());
     }
 
-    // Project `.cursor/mcp.json` only — `load_cursor_mcp_servers` would also
-    // merge the user-scoped `~/.cursor/mcp.json`, so read the project file
-    // directly instead.
-    for server in crate::util::config::load_mcp_json_file(&cwd.join(".cursor").join("mcp.json")) {
-        names.insert(mcp_server_name(&server).to_string());
+    if xai_grok_config::CURSOR_COMPAT_ENABLED {
+        for server in crate::util::config::load_mcp_json_file(&cwd.join(".cursor").join("mcp.json"))
+        {
+            names.insert(mcp_server_name(&server).to_string());
+        }
     }
 
     // `~/.claude.json projects.<cwd>.mcpServers` object keys.
@@ -725,14 +726,9 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn claude_env_gate_drops_project_env_when_untrusted() {
+    fn claude_env_is_build_disabled_regardless_of_trust() {
         let _sim = simulate_release_build();
-        // The `.claude/settings.json` env load site mirrors
-        // `load_claude_env_with_project(cwd, project_scope_allowed(cwd))`: an
-        // untrusted clone's repo-tree env (which would feed BASH_ENV /
-        // GIT_SSH_COMMAND / … to every subprocess) is dropped; a store-trusted
-        // folder merges it. GROK_HOME-isolated so the trust store is empty;
-        // GROK_FOLDER_TRUST unset so the default-on feature flag applies.
+        // Trust must not re-enable a build-disabled vendor settings loader.
         use xai_grok_workspace::permission::claude_settings::load_claude_env_with_project;
         let home = tempfile::tempdir().unwrap();
         let _env = EnvGuard::set("GROK_HOME", home.path());
@@ -746,37 +742,20 @@ mod tests {
         )
         .unwrap();
 
-        // Untrusted: verdict false => the repo-tree env is dropped.
-        assert!(!resolve_and_record(tmp.path(), None, false));
-        let untrusted =
-            load_claude_env_with_project(tmp.path(), resolve_and_record(tmp.path(), None, false));
-        assert!(
-            !untrusted.contains_key("REPO_TREE_ENV_GATED"),
-            "untrusted folder must drop repo-tree .claude env"
-        );
+        assert!(!repo_configs_present(tmp.path()));
+        assert!(load_claude_env_with_project(tmp.path(), false).is_empty());
 
         // Store-trust => verdict reconciles to true => repo-tree env merged.
         let mut store = TrustStore::load();
         store.set_trusted(&workspace_key(tmp.path())).unwrap();
-        assert!(resolve_and_record(tmp.path(), None, false));
-        let trusted =
-            load_claude_env_with_project(tmp.path(), resolve_and_record(tmp.path(), None, false));
-        assert_eq!(
-            trusted.get("REPO_TREE_ENV_GATED"),
-            Some(&"1".to_string()),
-            "trusted folder must merge repo-tree .claude env"
-        );
+        assert!(load_claude_env_with_project(tmp.path(), true).is_empty());
     }
 
     #[test]
     #[serial_test::serial]
-    fn claude_env_gate_drops_subdir_project_env_when_untrusted() {
+    fn claude_subdir_env_is_build_disabled_regardless_of_trust() {
         let _sim = simulate_release_build();
-        // RCE regression (subdir bypass): a `.claude/settings.json` with `env` in
-        // a SUBDIR — the ONLY repo config — launched from that subdir must flip the
-        // folder untrusted AND have its env dropped. The env loader walks
-        // cwd→repo-root, so detection MUST walk too (a git-root-only probe missed
-        // this). GROK_HOME-isolated so the trust store is empty.
+        // A repo-local Claude env file must remain invisible even after trust.
         use xai_grok_workspace::permission::claude_settings::load_claude_env_with_project;
         let home = tempfile::tempdir().unwrap();
         let _env = EnvGuard::set("GROK_HOME", home.path());
@@ -791,31 +770,13 @@ mod tests {
         )
         .unwrap();
 
-        // Detection now walks cwd→root, so the subdir-only `.claude` is detected
-        // and the folder resolves untrusted.
-        assert!(
-            repo_configs_present(&subdir),
-            "subdir .claude/settings.json must be detected"
-        );
-        assert!(!resolve_and_record(&subdir, None, false));
-        let untrusted =
-            load_claude_env_with_project(&subdir, resolve_and_record(&subdir, None, false));
-        assert!(
-            !untrusted.contains_key("SUBDIR_REPO_ENV_GATED"),
-            "untrusted subdir folder must drop its repo-tree .claude env"
-        );
+        assert!(!repo_configs_present(&subdir));
+        assert!(load_claude_env_with_project(&subdir, false).is_empty());
 
         // Granting trust re-enables it (proves the env file is real/loadable).
         let mut store = TrustStore::load();
         store.set_trusted(&workspace_key(&subdir)).unwrap();
-        assert!(resolve_and_record(&subdir, None, false));
-        let trusted =
-            load_claude_env_with_project(&subdir, resolve_and_record(&subdir, None, false));
-        assert_eq!(
-            trusted.get("SUBDIR_REPO_ENV_GATED"),
-            Some(&"1".to_string()),
-            "trusted folder must merge the subdir repo-tree .claude env"
-        );
+        assert!(load_claude_env_with_project(&subdir, true).is_empty());
     }
 
     #[test]
@@ -1286,8 +1247,8 @@ mod tests {
 
     /// Pins the three known repo-local FILE sources of
     /// [`project_scoped_mcp_names`]: a project server declared in each of
-    /// `.grok/config.toml`, `.mcp.json`, and `.cursor/mcp.json` must appear in
-    /// the returned set, catching a REGRESSION that drops one of them. It cannot
+    /// `.grok/config.toml` and `.mcp.json` must appear in the returned set,
+    /// while build-disabled Cursor state must not. This cannot
     /// catch a brand-new source TYPE added only to a loader — the prominent
     /// single-source-of-truth doc on `project_scoped_mcp_names` is that guard.
     /// (`~/.claude.json` is excluded — it lives under `$HOME` and a test must not
@@ -1316,12 +1277,13 @@ mod tests {
         .unwrap();
 
         let names = project_scoped_mcp_names(tmp.path());
-        for expected in ["cfgsrv", "jsonsrv", "cursorsrv"] {
+        for expected in ["cfgsrv", "jsonsrv"] {
             assert!(
                 names.contains(expected),
                 "project_scoped_mcp_names missing {expected:?} — a project MCP source is no longer gated; got {names:?}"
             );
         }
+        assert!(!names.contains("cursorsrv"));
     }
 
     #[test]

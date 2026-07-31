@@ -23,10 +23,8 @@ pub fn apply_grok_agent_marker(cmd: &mut tokio::process::Command) {
     cmd.env(GROK_AGENT_ENV, GROK_AGENT_ENV_VALUE);
 }
 
-/// Expand the four plugin-path tokens (`${CLAUDE_PLUGIN_ROOT}` / `${GROK_PLUGIN_ROOT}`
-/// and `${CLAUDE_PLUGIN_DATA}` / `${GROK_PLUGIN_DATA}`) in `s`. Each pair is expanded
-/// only when its value is provided. Single source of truth for plugin agent bodies,
-/// plugin skill/command bodies, and plugin MCP/hook config substitution.
+/// Expand Grok's plugin-path tokens in `s` when their values are provided.
+/// Claude Code token names are deliberately left literal.
 pub fn substitute_plugin_tokens(
     s: &str,
     plugin_root: Option<&str>,
@@ -34,14 +32,10 @@ pub fn substitute_plugin_tokens(
 ) -> String {
     let mut out = s.to_string();
     if let Some(root) = plugin_root {
-        out = out
-            .replace("${CLAUDE_PLUGIN_ROOT}", root)
-            .replace("${GROK_PLUGIN_ROOT}", root);
+        out = out.replace("${GROK_PLUGIN_ROOT}", root);
     }
     if let Some(data) = plugin_data {
-        out = out
-            .replace("${CLAUDE_PLUGIN_DATA}", data)
-            .replace("${GROK_PLUGIN_DATA}", data);
+        out = out.replace("${GROK_PLUGIN_DATA}", data);
     }
     out
 }
@@ -53,9 +47,12 @@ mod tests {
     const ALL_TOKENS: &str = "${CLAUDE_PLUGIN_ROOT}/a ${GROK_PLUGIN_ROOT}/b ${CLAUDE_PLUGIN_DATA}/c ${GROK_PLUGIN_DATA}/d";
 
     #[test]
-    fn expands_all_four_tokens_when_both_provided() {
+    fn expands_only_grok_tokens_when_both_provided() {
         let out = substitute_plugin_tokens(ALL_TOKENS, Some("/root"), Some("/data"));
-        assert_eq!(out, "/root/a /root/b /data/c /data/d");
+        assert_eq!(
+            out,
+            "${CLAUDE_PLUGIN_ROOT}/a /root/b ${CLAUDE_PLUGIN_DATA}/c /data/d"
+        );
     }
 
     #[test]
@@ -69,7 +66,7 @@ mod tests {
         let out = substitute_plugin_tokens(ALL_TOKENS, Some("/root"), None);
         assert_eq!(
             out,
-            "/root/a /root/b ${CLAUDE_PLUGIN_DATA}/c ${GROK_PLUGIN_DATA}/d"
+            "${CLAUDE_PLUGIN_ROOT}/a /root/b ${CLAUDE_PLUGIN_DATA}/c ${GROK_PLUGIN_DATA}/d"
         );
     }
 

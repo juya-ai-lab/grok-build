@@ -930,7 +930,8 @@ mod tests {
             .matcher
             .as_ref()
             .expect("valid sibling must recompile");
-        assert!(ok.is_match("run_terminal_command"));
+        assert!(ok.is_match("Bash"));
+        assert!(!ok.is_match("run_terminal_command"));
         assert!(!ok.is_match("read_file"));
 
         let broken = by_name["broken"]

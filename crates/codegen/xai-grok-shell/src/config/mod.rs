@@ -280,6 +280,13 @@ pub struct SubagentsConfig {
 use xai_grok_subagent_resolution::config::{SubagentPersona, SubagentRole};
 impl SubagentsConfig {
     fn discover_personas_in_dir(&mut self, dir: &std::path::Path) {
+        if xai_grok_config::validate_grok_path(dir).is_none() {
+            tracing::warn!(
+                path = %dir.display(),
+                "refusing personas directory under Claude/Codex vendor state"
+            );
+            return;
+        }
         if !dir.is_dir() {
             return;
         }
@@ -292,7 +299,9 @@ impl SubagentsConfig {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            if xai_grok_config::validate_grok_path(&path).is_none()
+                || path.extension().and_then(|e| e.to_str()) != Some("toml")
+            {
                 continue;
             }
             let Some(name) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
@@ -320,6 +329,13 @@ impl SubagentsConfig {
         }
     }
     fn discover_roles_in_dir(&mut self, dir: &std::path::Path) {
+        if xai_grok_config::validate_grok_path(dir).is_none() {
+            tracing::warn!(
+                path = %dir.display(),
+                "refusing roles directory under Claude/Codex vendor state"
+            );
+            return;
+        }
         if !dir.is_dir() {
             return;
         }
@@ -332,7 +348,9 @@ impl SubagentsConfig {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            if xai_grok_config::validate_grok_path(&path).is_none()
+                || path.extension().and_then(|e| e.to_str()) != Some("toml")
+            {
                 continue;
             }
             let Some(name) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
@@ -870,6 +888,9 @@ impl StorageMode {
         cli_override: Option<&str>,
         remote: Option<&crate::util::config::RemoteSettings>,
     ) -> Self {
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            return Self::Local;
+        }
         if let Some(mode) = cli_override {
             match mode {
                 "writeback" => return Self::Writeback,
@@ -1745,6 +1766,9 @@ pub fn validate_hooks_path(path: &str) -> Result<(), Box<dyn std::error::Error>>
     let candidate = std::path::Path::new(path);
     if !candidate.is_absolute() {
         return Err("Hook path must be absolute.".into());
+    }
+    if xai_grok_config::validate_grok_path(candidate).is_none() {
+        return Err("Hook path must not be inside Claude/Codex vendor state.".into());
     }
     let grok_home = crate::util::grok_home::grok_home();
     let canonical = dunce::canonicalize(candidate)

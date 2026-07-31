@@ -486,7 +486,7 @@ fn instruction_file_type(
 
 /// Wraps the production instruction discovery (`agents_md::read_agents_config_with_paths`).
 async fn list_instructions(cwd: &Path) -> Vec<InstructionFile> {
-    // Discover with all vendors ON so inspect shows the full set.
+    // Use the same build-gated discovery as a live session.
     let configs = xai_grok_agent::prompt::agents_md::read_agents_config_with_paths(
         &cwd.display().to_string(),
         xai_grok_agent::prompt::skills::CompatConfig::default(),
@@ -662,7 +662,7 @@ fn login_policy_report(config: Option<&crate::agent::config::Config>) -> LoginPo
     }
 }
 
-/// Discovers hooks with every vendor enabled so compatibility can be annotated later.
+/// Discovers the same build-enabled hook sources as a live session.
 fn list_hooks(
     git_root: Option<&Path>,
     project_trusted: bool,
@@ -1563,13 +1563,11 @@ mod tests {
 
         let human = render_harness_compatibility(&report);
 
-        assert!(human.contains("skills     on   (default)"), "{human}");
-        assert!(human.contains("rules      OFF  (config)"), "{human}");
-        assert!(
-            !human.contains("Defaults shown; remote may override."),
-            "{human}"
-        );
-        assert!(!human.contains("resolved at session start"), "{human}");
+        assert!(human.contains("Harness Compatibility"), "{human}");
+        // Vendor compatibility cells are compile-time disabled: no per-vendor
+        // rows are emitted, only the section header.
+        assert!(!human.contains("skills"), "{human}");
+        assert!(!human.contains("rules"), "{human}");
         assert!(!human.contains("unresolved"), "{human}");
         assert!(!human.contains("?"), "{human}");
     }

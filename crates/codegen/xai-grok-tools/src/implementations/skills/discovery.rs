@@ -20,57 +20,16 @@ pub const MAX_SKILL_WALK_DEPTH: usize = 5;
 
 /// Subdirectory names that contain skill definitions.
 ///
-/// `skills` is the standard layout (`.grok/skills/`, `.claude/skills/`,
-/// `.cursor/skills/`). The product-specific `skills-cursor/` layout is no
-/// longer scanned — it pulled vendor default skills into Grok Build sessions.
+/// `skills` is the standard layout (`.grok/skills/`, `.agents/skills/`). The
+/// product-specific `skills-cursor/` layout is not scanned.
 const SKILL_SUBDIRS: &[&str] = &["skills"];
-
-/// Cursor ships these default skills in `~/.cursor/skills-cursor/`
-/// (per its `.cursor-managed-skills-manifest.json` / `.sync-manifest.json`).
-/// They are vendor builtins, not user content, so we drop any skill with one
-/// of these names discovered under a `/.cursor/` path segment. The denylist is
-/// orthogonal to the per-vendor toggle and always applied.
-const CURSOR_DEFAULT_SKILLS: &[&str] = &[
-    "babysit",
-    "canvas",
-    "create-hook",
-    "create-rule",
-    "create-skill",
-    "create-subagent",
-    "loop",
-    "migrate-to-skills",
-    "sdk",
-    "shell",
-    "split-to-prs",
-    "statusline",
-    "update-cli-config",
-    "update-cursor-settings",
-];
-
-/// Vendor ships these default skills in-binary (the on-disk `~/.claude/skills`
-/// dir is typically empty, so this is best-effort). Any skill with one of these
-/// names discovered under a `/.claude/` path segment is dropped.
-const CLAUDE_DEFAULT_SKILLS: &[&str] = &["pdf", "docx", "xlsx", "pptx", "skill-creator"];
-
-/// Return true if `name` is a vendor-shipped default skill discovered under the
-/// matching vendor's config dir (`/.cursor/` or `/.claude/`).
-///
-/// The path check ensures a user's own skill that merely shares a denylisted
-/// name (e.g. `~/.grok/skills/shell`) is NOT dropped — only skills physically
-/// located under the vendor dir are treated as vendor builtins.
-fn is_vendor_default_skill(path: &str, name: &str) -> bool {
-    let in_cursor = path.contains("/.cursor/") || path.contains("\\.cursor\\");
-    let in_claude = path.contains("/.claude/") || path.contains("\\.claude\\");
-    (in_cursor && CURSOR_DEFAULT_SKILLS.contains(&name))
-        || (in_claude && CLAUDE_DEFAULT_SKILLS.contains(&name))
-}
 
 /// Find SKILL.md files inside `skills/` subdirectories, recursively.
 pub fn find_skill_paths(dir: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for subdir in SKILL_SUBDIRS {
         let skills_dir = dir.join(subdir);
-        if skills_dir.is_dir() {
+        if xai_grok_config::validate_skill_path(&skills_dir).is_some() && skills_dir.is_dir() {
             walk_for_skill_md(&skills_dir, &mut paths, 0);
         }
     }
@@ -84,14 +43,17 @@ pub fn find_command_paths(dir: &Path) -> Vec<PathBuf> {
 
 /// Scan a directory for `.md` files (flat, no recursion).
 pub fn scan_md_files(dir: &Path) -> Vec<PathBuf> {
-    if !dir.is_dir() {
+    if xai_grok_config::validate_skill_path(dir).is_none() || !dir.is_dir() {
         return vec![];
     }
     let mut paths = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+            if xai_grok_config::validate_skill_path(&path).is_some()
+                && path.is_file()
+                && path.extension().and_then(|e| e.to_str()) == Some("md")
+            {
                 paths.push(path);
             }
         }
@@ -110,9 +72,12 @@ pub fn scan_md_files(dir: &Path) -> Vec<PathBuf> {
 /// plugin skill loader, the plugin count/name reporters, and config-path
 /// collection so they can never drift apart.
 pub fn find_skill_md_paths(dir: &Path) -> Vec<PathBuf> {
+    if xai_grok_config::validate_skill_path(dir).is_none() {
+        return Vec::new();
+    }
     let mut paths = Vec::new();
     let self_skill_md = dir.join("SKILL.md");
-    if self_skill_md.is_file() {
+    if xai_grok_config::validate_skill_path(&self_skill_md).is_some() && self_skill_md.is_file() {
         paths.push(self_skill_md);
     }
     walk_for_skill_md(dir, &mut paths, 0);
@@ -125,19 +90,21 @@ pub fn find_skill_md_paths(dir: &Path) -> Vec<PathBuf> {
 /// filesystem-dependent, and name-collision handling downstream is
 /// first-seen-wins, so an unsorted walk picks a nondeterministic winner.
 pub fn walk_for_skill_md(dir: &Path, paths: &mut Vec<PathBuf>, depth: usize) {
-    if depth > MAX_SKILL_WALK_DEPTH {
+    if depth > MAX_SKILL_WALK_DEPTH || xai_grok_config::validate_skill_path(dir).is_none() {
         return;
     }
     if let Ok(entries) = std::fs::read_dir(dir) {
         let mut dirs: Vec<PathBuf> = entries
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
+            .filter(|path| xai_grok_config::validate_skill_path(path).is_some() && path.is_dir())
             .collect();
         dirs.sort();
         for path in dirs {
             let skill_md_path = path.join("SKILL.md");
-            if skill_md_path.is_file() {
+            if xai_grok_config::validate_skill_path(&skill_md_path).is_some()
+                && skill_md_path.is_file()
+            {
                 paths.push(skill_md_path);
             }
             walk_for_skill_md(&path, paths, depth + 1);
@@ -667,12 +634,19 @@ fn extract_lead_block(body: &str, include_headings: bool) -> Option<String> {
 /// Parse a list of `(path, scope)` pairs into `SkillInfo` values.
 ///
 /// This is the single chokepoint for all skill parsing (startup, dynamic, and
-/// host-driven scans), so the vendor-default denylist is applied here to cover
-/// every path. See [`is_vendor_default_skill`].
+/// host-driven scans), so foreign vendor-state validation happens before the
+/// first read and the vendor-default denylist covers every accepted path.
 pub fn parse_skill_files(skill_files: Vec<(PathBuf, SkillScope)>) -> Vec<SkillInfo> {
     let mut skills: Vec<SkillInfo> = skill_files
         .into_iter()
         .filter_map(|(path, scope)| {
+            if xai_grok_config::validate_skill_path(&path).is_none() {
+                tracing::warn!(
+                    path = %path.display(),
+                    "refusing skill file under Claude/Codex vendor state"
+                );
+                return None;
+            }
             let path_str = path.to_string_lossy().to_string();
 
             let (content, _) = match read_frontmatter_only(&path) {
@@ -813,28 +787,22 @@ pub fn parse_skill_files(skill_files: Vec<(PathBuf, SkillScope)>) -> Vec<SkillIn
         })
         .collect();
 
-    // Drop vendor-shipped default skills (vendor builtins) found under
-    // a `/.cursor/` or `/.claude/` path. Always applied, independent of the
-    // per-vendor toggle, so vendor builtins never leak into Grok Build.
-    skills.retain(|s| !is_vendor_default_skill(&s.path, &s.name));
-
     skills
 }
 
-/// Walk upward from accessed file paths toward cwd, discovering skill
-/// directories not found at startup.
+/// Walk upward from accessed file paths toward cwd, discovering skill or
+/// command directories not found at startup.
 ///
 /// For each path in `file_paths`, walks from `dirname(path)` upward toward
-/// `cwd` (exclusive). At each directory, checks for `.grok/skills/`,
-/// `.agents/skills/`, and (gated on `compat.claude.skills`) `.claude/skills/`.
+/// `cwd` (exclusive). At each directory, checks the original Grok
+/// `.grok/{skills,commands}` and `.agents/{skills,commands}` roots.
 /// Skips already-checked dirs.
 ///
 /// Skill/command roots are **not** filtered by `.gitignore`. Discovery only
-/// visits known config roots (`.grok`, `.agents`, `.claude`, …); those are
+/// visits the known config roots (`.grok` and `.agents`); those paths are
 /// local harness config (often intentionally gitignored), not tree content.
 /// Contrast with AGENTS.md discovery, which still respects gitignore. Use
-/// `[skills] ignore` to hide a path. Compat loaders likewise load project
-/// `.claude/commands` even when ignored.
+/// `[skills] ignore` to hide a path.
 ///
 /// `.cursor/` is intentionally NOT scanned in this dynamic path — it never was
 /// historically, and preserving that keeps default behavior byte-for-byte. The
@@ -847,14 +815,11 @@ pub fn discover_skills_for_paths(
     cwd: &Path,
     git_root: Option<&Path>,
     already_checked: &mut HashSet<PathBuf>,
-    compat: CompatConfig,
+    _compat: CompatConfig,
 ) -> Vec<SkillInfo> {
-    // `.grok` and `.agents` are always scanned; `.claude` is gated on the
-    // claude-vendor skills cell. (`.cursor` is excluded here by design — see fn docs.)
-    let mut config_dir_names: Vec<&str> = vec![".grok", ".agents"];
-    if compat.claude.skills {
-        config_dir_names.push(".claude");
-    }
+    // Native Grok and the shared Agent Skills root are scanned. Vendor-specific
+    // directories remain excluded from dynamic discovery.
+    let config_dir_names: [&str; 2] = [".grok", ".agents"];
 
     let mut skill_files: Vec<(PathBuf, SkillScope)> = Vec::new();
     let mut seen_canonical_paths = HashSet::new();
@@ -862,8 +827,11 @@ pub fn discover_skills_for_paths(
     let cwd_canonical = dunce::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
 
     for file_path in file_paths {
+        let Some(file_path) = xai_grok_config::validate_skill_path(file_path) else {
+            continue;
+        };
         let start_dir = if file_path.is_dir() {
-            file_path.to_path_buf()
+            file_path
         } else {
             match file_path.parent() {
                 Some(p) => p.to_path_buf(),
@@ -894,11 +862,9 @@ pub fn discover_skills_for_paths(
 
             for config_dir_name in &config_dir_names {
                 let config_dir = dir.join(config_dir_name);
-                // Skills before commands: skills win name collisions.
-                for path in find_skill_paths(&config_dir)
-                    .into_iter()
-                    .chain(find_command_paths(&config_dir))
-                {
+                let mut discovered = find_skill_paths(&config_dir);
+                discovered.extend(find_command_paths(&config_dir));
+                for path in discovered {
                     let canonical = dunce::canonicalize(&path).unwrap_or_else(|_| path.clone());
                     if seen_canonical_paths.insert(canonical) {
                         skill_files.push((path, SkillScope::Local));
@@ -1383,129 +1349,118 @@ model: test-model
     }
 
     #[test]
-    fn find_skill_paths_ignores_skills_cursor_layout() {
+    fn find_skill_paths_rejects_cursor_roots() {
         let tmp = tempfile::tempdir().unwrap();
         let cursor_dir = tmp.path().join(".cursor");
         // Cursor product layout: scanned no longer.
         let legacy = cursor_dir.join("skills-cursor").join("babysit");
         std::fs::create_dir_all(&legacy).unwrap();
         std::fs::write(legacy.join("SKILL.md"), "---\nname: babysit\n---\n").unwrap();
-        // Standard layout: still scanned.
+        // Even a standard-looking layout remains Cursor-owned and disabled.
         let standard = cursor_dir.join("skills").join("mine");
         std::fs::create_dir_all(&standard).unwrap();
         std::fs::write(standard.join("SKILL.md"), "---\nname: mine\n---\n").unwrap();
 
         let paths = find_skill_paths(&cursor_dir);
         let strs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
-        assert!(
-            strs.iter().any(|p| p.contains("skills/mine")),
-            "standard skills/ layout must still be found: {strs:?}"
-        );
+        assert!(strs.is_empty(), "Cursor roots must stay disabled: {strs:?}");
         assert!(
             !strs.iter().any(|p| p.contains("skills-cursor")),
             "skills-cursor layout must no longer be scanned: {strs:?}"
         );
     }
 
-    // ── vendor-default skill denylist ──────────────────────
-
+    #[cfg(unix)]
     #[test]
-    fn is_vendor_default_skill_matches_builtins_under_vendor_dir() {
-        assert!(is_vendor_default_skill(
-            "/home/u/.cursor/skills/shell/SKILL.md",
-            "shell"
-        ));
-        assert!(is_vendor_default_skill(
-            "/home/u/.cursor/skills/create-rule/SKILL.md",
-            "create-rule"
-        ));
-    }
-
-    #[test]
-    fn is_vendor_default_skill_matches_claude_builtins_under_claude_dir() {
-        assert!(is_vendor_default_skill(
-            "/home/u/.claude/skills/pdf/SKILL.md",
-            "pdf"
-        ));
-    }
-
-    #[test]
-    fn is_vendor_default_skill_spares_user_skill_outside_vendor_dir() {
-        // A user's own "shell" skill in ~/.grok is NOT a vendor builtin.
-        assert!(!is_vendor_default_skill(
-            "/home/u/.grok/skills/shell/SKILL.md",
-            "shell"
-        ));
-    }
-
-    #[test]
-    fn is_vendor_default_skill_spares_non_denylisted_name_under_vendor_dir() {
-        assert!(!is_vendor_default_skill(
-            "/home/u/.cursor/skills/my-cursor-skill/SKILL.md",
-            "my-cursor-skill"
-        ));
-    }
-
-    #[test]
-    fn is_vendor_default_skill_does_not_cross_vendors() {
-        // "shell" is a cursor-vendor builtin, not a claude-vendor one — under .claude it stays.
-        assert!(!is_vendor_default_skill(
-            "/home/u/.claude/skills/shell/SKILL.md",
-            "shell"
-        ));
-    }
-
-    #[test]
-    fn parse_skill_files_drops_denylisted_cursor_skill() {
+    fn discovery_primitives_reject_vendor_roots_and_symlink_aliases() {
         let tmp = tempfile::tempdir().unwrap();
-        // Denylisted name under a /.cursor/ path → dropped.
-        let cursor_shell = tmp.path().join(".cursor").join("skills").join("shell");
-        std::fs::create_dir_all(&cursor_shell).unwrap();
+        let safe = tmp.path().join("safe");
+        let safe_skill = safe.join("skills").join("safe-skill");
+        let safe_commands = safe.join("commands");
+        std::fs::create_dir_all(&safe_skill).unwrap();
+        std::fs::create_dir_all(&safe_commands).unwrap();
         std::fs::write(
-            cursor_shell.join("SKILL.md"),
-            "---\nname: shell\ndescription: cursor builtin\n---\n",
+            safe_skill.join("SKILL.md"),
+            "---\nname: safe-skill\ndescription: safe\n---\n",
         )
         .unwrap();
-        // Same name under /.grok/ → kept (user content).
-        let grok_shell = tmp.path().join(".grok").join("skills").join("shell");
-        std::fs::create_dir_all(&grok_shell).unwrap();
         std::fs::write(
-            grok_shell.join("SKILL.md"),
-            "---\nname: shell\ndescription: user content\n---\n",
+            safe_commands.join("safe-command.md"),
+            "---\nname: safe-command\ndescription: safe\n---\n",
         )
         .unwrap();
+        assert_eq!(find_skill_paths(&safe).len(), 1);
+        assert_eq!(find_command_paths(&safe).len(), 1);
 
-        let skills = parse_skill_files(vec![
-            (cursor_shell.join("SKILL.md"), SkillScope::User),
-            (grok_shell.join("SKILL.md"), SkillScope::User),
-        ]);
-        assert_eq!(skills.len(), 1, "cursor builtin must be dropped");
-        assert!(skills[0].path.contains("/.grok/"));
-    }
+        for component in [".claude", ".cursor", ".codex"] {
+            let vendor = tmp.path().join(component);
+            let blocked_skill = vendor.join("skills").join("blocked");
+            let blocked_commands = vendor.join("commands");
+            std::fs::create_dir_all(&blocked_skill).unwrap();
+            std::fs::create_dir_all(&blocked_commands).unwrap();
+            let blocked_skill_md = blocked_skill.join("SKILL.md");
+            std::fs::write(
+                &blocked_skill_md,
+                "---\nname: blocked\ndescription: blocked\n---\n",
+            )
+            .unwrap();
+            std::fs::write(
+                blocked_commands.join("blocked.md"),
+                "---\nname: blocked-command\ndescription: blocked\n---\n",
+            )
+            .unwrap();
 
-    #[test]
-    fn parse_skill_files_keeps_non_denylisted_cursor_skill() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cursor_skill = tmp
-            .path()
-            .join(".cursor")
-            .join("skills")
-            .join("my-cursor-skill");
-        std::fs::create_dir_all(&cursor_skill).unwrap();
+            assert!(find_skill_paths(&vendor).is_empty(), "{component}");
+            assert!(find_command_paths(&vendor).is_empty(), "{component}");
+            assert!(
+                find_skill_md_paths(&vendor.join("skills")).is_empty(),
+                "{component}"
+            );
+            assert!(
+                parse_skill_files(vec![(blocked_skill_md, SkillScope::User)]).is_empty(),
+                "{component}"
+            );
+
+            let alias = tmp.path().join(format!("alias-{}", &component[1..]));
+            std::os::unix::fs::symlink(&vendor, &alias).unwrap();
+            assert!(find_skill_paths(&alias).is_empty(), "alias for {component}");
+            assert!(
+                find_command_paths(&alias).is_empty(),
+                "alias for {component}"
+            );
+            assert!(
+                parse_skill_files(vec![(
+                    alias.join("skills/blocked/SKILL.md"),
+                    SkillScope::User,
+                )])
+                .is_empty(),
+                "alias for {component}"
+            );
+        }
+
+        let standard_agents = tmp.path().join(".agents");
+        let standard_skill = standard_agents.join("skills").join("shared");
+        let standard_commands = standard_agents.join("commands");
+        std::fs::create_dir_all(&standard_skill).unwrap();
+        std::fs::create_dir_all(&standard_commands).unwrap();
         std::fs::write(
-            cursor_skill.join("SKILL.md"),
-            "---\nname: my-cursor-skill\ndescription: user content\n---\n",
+            standard_skill.join("SKILL.md"),
+            "---\nname: shared\ndescription: shared\n---\n",
         )
         .unwrap();
-
-        let skills = parse_skill_files(vec![(cursor_skill.join("SKILL.md"), SkillScope::User)]);
-        assert_eq!(skills.len(), 1, "user cursor skill must be kept");
+        std::fs::write(
+            standard_commands.join("shared-command.md"),
+            "---\nname: shared-command\ndescription: shared command\n---\n",
+        )
+        .unwrap();
+        assert_eq!(find_skill_paths(&standard_agents).len(), 1);
+        assert_eq!(find_command_paths(&standard_agents).len(), 1);
     }
 
     // ── discover_skills_for_paths vendor gating ────────────
 
     #[test]
-    fn discover_skills_for_paths_gates_claude_dir() {
+    fn discover_skills_for_paths_never_scans_build_disabled_vendor_dirs() {
         use crate::types::compat::CompatConfig;
 
         let tmp = tempfile::tempdir().unwrap();
@@ -1515,12 +1470,20 @@ model: test-model
         let sub = repo.join("sub");
         std::fs::create_dir_all(&sub).unwrap();
 
-        // A .claude skill and a .grok skill in an intermediate dir.
+        // Build-disabled vendor skills plus native and standard shared skills
+        // in an intermediate dir.
         let claude_skill = sub.join(".claude").join("skills").join("claude-dyn");
         std::fs::create_dir_all(&claude_skill).unwrap();
         std::fs::write(
             claude_skill.join("SKILL.md"),
             "---\nname: claude-dyn\n---\n",
+        )
+        .unwrap();
+        let agents_skill = sub.join(".agents").join("skills").join("standard-dyn");
+        std::fs::create_dir_all(&agents_skill).unwrap();
+        std::fs::write(
+            agents_skill.join("SKILL.md"),
+            "---\nname: standard-dyn\n---\n",
         )
         .unwrap();
         let grok_skill = sub.join(".grok").join("skills").join("grok-dyn");
@@ -1530,44 +1493,58 @@ model: test-model
         let file = sub.join("file.rs");
         std::fs::write(&file, "fn main() {}").unwrap();
 
-        // claude.skills ON → both discovered.
+        // Even manually mutated resolved structs cannot restore vendor paths.
+        let mut compat = CompatConfig::default();
+        compat.claude.skills = true;
+        compat.codex.skills = true;
         let mut checked = HashSet::new();
-        let on = discover_skills_for_paths(
+        let skills = discover_skills_for_paths(
             &[file.as_path()],
             &repo,
             Some(repo.as_path()),
             &mut checked,
-            CompatConfig::default(),
+            compat,
         );
-        let names_on: Vec<&str> = on.iter().map(|s| s.name.as_str()).collect();
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"grok-dyn"), "grok-dyn missing: {names:?}");
         assert!(
-            names_on.contains(&"grok-dyn"),
-            "grok-dyn missing: {names_on:?}"
+            !names.contains(&"claude-dyn"),
+            "claude-dyn must remain build-disabled: {names:?}"
         );
         assert!(
-            names_on.contains(&"claude-dyn"),
-            "claude-dyn should be found when claude.skills on: {names_on:?}"
+            names.contains(&"standard-dyn"),
+            "standard .agents skill must be dynamically discovered: {names:?}"
         );
 
-        // claude.skills OFF → only grok-dyn discovered.
-        let mut compat_off = CompatConfig::default();
-        compat_off.claude.skills = false;
-        let mut checked2 = HashSet::new();
-        let off = discover_skills_for_paths(
-            &[file.as_path()],
-            &repo,
-            Some(repo.as_path()),
-            &mut checked2,
-            compat_off,
-        );
-        let names_off: Vec<&str> = off.iter().map(|s| s.name.as_str()).collect();
+        // A tool-provided target path inside vendor state is itself rejected
+        // before `is_dir` or any upward walk can touch its surrounding tree.
+        let vendor_target_dir = repo.join(".codex").join("work");
+        let hidden_grok_skill = vendor_target_dir
+            .join(".grok")
+            .join("skills")
+            .join("hidden-dyn");
+        std::fs::create_dir_all(&hidden_grok_skill).unwrap();
+        std::fs::write(
+            hidden_grok_skill.join("SKILL.md"),
+            "---\nname: hidden-dyn\n---\n",
+        )
+        .unwrap();
+        let vendor_target = vendor_target_dir.join("target.rs");
+        std::fs::write(&vendor_target, "fn hidden() {}").unwrap();
+        let mut vendor_checked = HashSet::new();
         assert!(
-            names_off.contains(&"grok-dyn"),
-            "grok-dyn missing: {names_off:?}"
+            discover_skills_for_paths(
+                &[vendor_target.as_path()],
+                &repo,
+                Some(repo.as_path()),
+                &mut vendor_checked,
+                compat,
+            )
+            .is_empty()
         );
         assert!(
-            !names_off.contains(&"claude-dyn"),
-            "claude-dyn must be gated off: {names_off:?}"
+            vendor_checked.is_empty(),
+            "vendor targets must not be walked"
         );
     }
 

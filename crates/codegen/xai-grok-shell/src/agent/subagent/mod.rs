@@ -1481,6 +1481,9 @@ fn resolve_agent_definition(
     subagent_type: &str,
     ctx: &SubagentSpawnContext,
 ) -> Option<xai_grok_agent::config::AgentDefinition> {
+    if xai_grok_agent::config::is_build_disabled_agent_name(subagent_type) {
+        return None;
+    }
     let cli_agents = ctx
         .agent_config
         .as_ref()
@@ -1497,6 +1500,9 @@ fn resolve_agent_definition(
         subagent_type,
         &resolution_context,
     )?;
+    if xai_grok_agent::config::is_build_disabled_agent_name(&def.name) {
+        return None;
+    }
     ctx.apply_session_cli_overrides(&mut def);
     Some(def)
 }
@@ -1532,6 +1538,11 @@ pub(crate) fn validate_subagent_type(
     subagent_type: &str,
     ctx: &SubagentValidationContext,
 ) -> SubagentValidateTypeOutcome {
+    if xai_grok_agent::config::is_build_disabled_agent_name(subagent_type) {
+        return SubagentValidateTypeOutcome::Unknown {
+            available: Vec::new(),
+        };
+    }
     let context = xai_grok_subagent_resolution::DefinitionValidationContext {
         cwd: &ctx.parent_cwd,
         plugins: ctx.plugin_registry.as_deref(),

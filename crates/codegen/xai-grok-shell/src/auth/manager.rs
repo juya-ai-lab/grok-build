@@ -281,6 +281,13 @@ impl AuthManager {
         let scope = grok_com_config.auth_scope();
         let proxy_base_url =
             crate::agent::config::EndpointsConfig::from_effective_config().proxy_url();
+        let default_auth_path = xai_grok_config::validate_grok_path(&grok_home.join("auth.json"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "refusing auth path under foreign vendor/shared state: {}",
+                    grok_home.display()
+                )
+            });
 
         xai_grok_telemetry::unified_log::info(
             "AuthManager::new",
@@ -300,9 +307,19 @@ impl AuthManager {
         // also honor it: their later refresh persistence (`update()`) writes to
         // this path, and previously the inline branch hardcoded the default —
         // silently splitting reads (inline) from writes (default path).
-        let path = std::env::var("GROK_AUTH_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| grok_home.join("auth.json"));
+        let path = match std::env::var_os("GROK_AUTH_PATH") {
+            Some(value) => {
+                let requested = PathBuf::from(value);
+                xai_grok_config::validate_grok_path(&requested).unwrap_or_else(|| {
+                    tracing::warn!(
+                        path = %requested.display(),
+                        "refusing GROK_AUTH_PATH under foreign vendor/shared state"
+                    );
+                    default_auth_path
+                })
+            }
+            None => default_auth_path,
+        };
 
         // GROK_AUTH: inline JSON credentials (highest priority, read-only).
         if let Ok(inline_json) = std::env::var("GROK_AUTH") {

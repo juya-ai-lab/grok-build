@@ -188,6 +188,9 @@ fn compute_project_hash(cwd: &Path) -> (String, Vec<PathBuf>) {
 /// - Project settings exist and have a different hash than last recorded
 /// - No import state exists yet but Claude settings files are present
 pub fn has_new_changes(cwd: &Path) -> bool {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return false;
+    }
     let state = load_import_state();
 
     // Check global scope.
@@ -246,6 +249,9 @@ fn now_rfc3339() -> String {
 ///
 /// Called after a successful import or explicit dismiss.
 pub fn mark_imported(cwd: &Path) {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return;
+    }
     let mut state = load_import_state();
 
     let (global_hash, _) = compute_global_hash();

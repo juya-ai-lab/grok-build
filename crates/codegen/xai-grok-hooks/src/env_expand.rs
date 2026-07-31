@@ -57,6 +57,25 @@
 
 use std::collections::HashMap;
 
+/// Vendor environment signals that Grok hooks must neither expand nor inherit.
+/// The parser, HTTP runner, and command runner share this fail-closed predicate.
+///
+/// Environment names are compared with ASCII case folding so mixed-case keys
+/// cannot bypass filtering on case-sensitive hosts or arrive through config on
+/// case-insensitive hosts.
+pub(crate) fn is_disabled_vendor_env(name: &str) -> bool {
+    starts_with_ignore_ascii_case(name, "CLAUDE_")
+        || starts_with_ignore_ascii_case(name, "CODEX_")
+        || starts_with_ignore_ascii_case(name, "GROK_CLAUDE_")
+        || starts_with_ignore_ascii_case(name, "GROK_CODEX_")
+}
+
+fn starts_with_ignore_ascii_case(name: &str, prefix: &str) -> bool {
+    name.as_bytes()
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
+}
+
 /// Sentinel prefix for the per-call mask sentinel; see [`make_sentinel`].
 ///
 /// Uses a Unicode Private Use Area code point (`U+F8FF`, the
@@ -142,6 +161,9 @@ pub(crate) fn expand_env_vars_with_extra(input: &str, extra: &HashMap<String, St
 
     // Step 2: run shellexpand on the (possibly) masked input.
     let context = |name: &str| -> Option<String> {
+        if is_disabled_vendor_env(name) {
+            return None;
+        }
         if let Some(v) = extra.get(name) {
             return Some(v.clone());
         }
@@ -348,6 +370,74 @@ mod tests {
         extra.insert("ROOT".to_string(), "/opt/plugin".to_string());
         let out = expand_env_vars_with_extra("$ROOT/bin/x.sh", &extra);
         assert_eq!(out, "/opt/plugin/bin/x.sh");
+    }
+
+    #[test]
+    fn disabled_vendor_env_matching_is_ascii_case_insensitive_and_narrow() {
+        for name in [
+            "CLAUDE_CONFIG_DIR",
+            "claude_config_dir",
+            "cLaUdE_cOnFiG_dIr",
+            "CLAUDE_PLUGIN_ROOT",
+            "CODEX_HOME",
+            "codex_home",
+            "CoDeX_SESSION",
+            "GROK_CLAUDE_PLUGIN_ROOT",
+            "grok_claude_plugin_root",
+            "GrOk_CoDeX_SESSION",
+        ] {
+            assert!(
+                is_disabled_vendor_env(name),
+                "expected {name} to be disabled"
+            );
+        }
+
+        for name in [
+            "CLAUDE",
+            "CODEX",
+            "MY_CLAUDE_CONFIG_DIR",
+            "GROK_CLAUDE",
+            "GROK_CODEX",
+            "GROK_HOOK_EVENT",
+            "ORDINARY_VARIABLE",
+        ] {
+            assert!(
+                !is_disabled_vendor_env(name),
+                "expected {name} to be preserved"
+            );
+        }
+    }
+
+    #[test]
+    fn vendor_signals_are_never_expanded_but_regular_vars_are() {
+        with_env_var("cOdEx_HoMe", Some("/process/codex"), || {
+            let extra = HashMap::from([
+                ("cLaUdE_cOnFiG_dIr".to_string(), "/extra/claude".to_string()),
+                (
+                    "GrOk_ClAuDe_PLUGIN_ROOT".to_string(),
+                    "/extra/plugin".to_string(),
+                ),
+                ("ClAuDe_SESSION".to_string(), "claude-session".to_string()),
+                (
+                    "grok_codex_session".to_string(),
+                    "extra-session".to_string(),
+                ),
+                ("ORDINARY_VARIABLE".to_string(), "expanded".to_string()),
+            ]);
+            let input = concat!(
+                "${cOdEx_HoMe}:$cLaUdE_cOnFiG_dIr:",
+                "${GrOk_ClAuDe_PLUGIN_ROOT}:$ClAuDe_SESSION:",
+                "$grok_codex_session:",
+                "$ORDINARY_VARIABLE"
+            );
+            let expected = concat!(
+                "${cOdEx_HoMe}:$cLaUdE_cOnFiG_dIr:",
+                "${GrOk_ClAuDe_PLUGIN_ROOT}:$ClAuDe_SESSION:",
+                "$grok_codex_session:",
+                "expanded"
+            );
+            assert_eq!(expand_env_vars_with_extra(input, &extra), expected);
+        });
     }
 
     #[test]

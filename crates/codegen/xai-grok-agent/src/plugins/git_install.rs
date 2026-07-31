@@ -303,6 +303,14 @@ pub fn install_from_source_with_label(
             (kind, commit)
         }
         InstallSource::Local { path, subdir } => {
+            if xai_grok_config::validate_grok_path(path).is_none() {
+                return Err(InstallError::InstallFailed {
+                    detail: format!(
+                        "refusing local plugin source under Claude/Codex vendor state: {}",
+                        path.display()
+                    ),
+                });
+            }
             if !path.is_dir() {
                 return Err(InstallError::InstallFailed {
                     detail: format!("local path is not a directory: {}", path.display()),
@@ -1032,6 +1040,23 @@ mod tests {
             }
             _ => panic!("expected Local"),
         }
+    }
+
+    #[test]
+    fn install_rejects_local_vendor_state_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join(".codex").join("plugins").join("demo");
+        std::fs::create_dir_all(&source).unwrap();
+        let registry = InstallRegistry::empty(tmp.path().join("installed"));
+        let result = install_from_source(
+            &InstallSource::Local {
+                path: source,
+                subdir: None,
+            },
+            &registry,
+            false,
+        );
+        assert!(matches!(result, Err(InstallError::InstallFailed { .. })));
     }
 
     #[test]

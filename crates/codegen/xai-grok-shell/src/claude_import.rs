@@ -331,6 +331,9 @@ fn extract_hooks_from_settings_file(path: &Path) -> Vec<ImportableItem> {
 /// - MCP servers from `~/.claude.json` (global + per-project)
 /// - MCP servers from `.mcp.json` files (project)
 pub fn scan_importable_settings(cwd: &Path) -> ImportPlan {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return ImportPlan::default();
+    }
     let mut plan = ImportPlan::default();
 
     let all_paths = find_claude_settings_paths(cwd);
@@ -665,6 +668,9 @@ fn write_import_marker(config_path: &Path) -> anyhow::Result<()> {
 /// still wants the cutoff applied so re-entering a workspace with `.claude/`
 /// content doesn't re-engage the runtime fallbacks.
 pub fn mark_claude_imported() -> anyhow::Result<()> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        anyhow::bail!("Claude Code compatibility is disabled in this build");
+    }
     let path = crate::util::grok_home::grok_home().join("config.toml");
     write_import_marker(&path)?;
     refresh_marker_cache(true);
@@ -683,6 +689,9 @@ pub fn mark_claude_imported() -> anyhow::Result<()> {
 /// via `git2::Repository::discover`), not `cwd/.grok/config.toml`, to avoid
 /// creating config files in unexpected subdirectories.
 pub fn apply_import(plan: &ImportPlan, cwd: &Path) -> anyhow::Result<ImportResult> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        anyhow::bail!("Claude Code compatibility is disabled in this build");
+    }
     let mut result = ImportResult::default();
 
     if !plan.global_items.is_empty() {
@@ -1198,6 +1207,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn build_disabled_public_import_entry_points_fail_closed() {
+        assert!(!xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED);
+        let cwd = Path::new("/tmp/vendor-import-must-stay-disabled");
+
+        assert!(scan_importable_settings(cwd).is_empty());
+        assert!(mark_claude_imported().is_err());
+        assert!(apply_import(&ImportPlan::default(), cwd).is_err());
+    }
+
+    #[test]
     fn format_rule_bash_with_pattern() {
         let rule = PermissionRule {
             action: RuleAction::Allow,
@@ -1636,7 +1655,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn discover_hook_source_paths_includes_claude_when_marker_unset() {
+    fn discover_hook_source_paths_never_includes_claude() {
         let _g = MarkerGuard;
         refresh_marker_cache(false);
         let dir = tempfile::tempdir().unwrap();
@@ -1648,15 +1667,15 @@ mod tests {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         assert!(
-            project_strs.iter().any(|s| s.contains(".claude")),
-            "project sources should include .claude/ when marker unset; got {:?}",
+            !project_strs.iter().any(|s| s.contains(".claude")),
+            "project sources must never include .claude/ in this build; got {:?}",
             project_strs
         );
     }
 
     #[test]
     #[serial]
-    fn discover_hook_source_paths_includes_cursor_hooks_json() {
+    fn discover_hook_source_paths_never_includes_cursor_hooks_json() {
         let _g = MarkerGuard;
         refresh_marker_cache(false);
         let dir = tempfile::tempdir().unwrap();
@@ -1668,10 +1687,10 @@ mod tests {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         assert!(
-            global_strs
+            !global_strs
                 .iter()
                 .any(|s| s.contains(".cursor") && s.ends_with("hooks.json")),
-            "global sources should include ~/.cursor/hooks.json; got {:?}",
+            "global sources must never include ~/.cursor/hooks.json; got {:?}",
             global_strs
         );
         let project_strs: Vec<String> = paths
@@ -1680,10 +1699,10 @@ mod tests {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         assert!(
-            project_strs
+            !project_strs
                 .iter()
                 .any(|s| s.contains(".cursor") && s.ends_with("hooks.json")),
-            "project sources should include .cursor/hooks.json; got {:?}",
+            "project sources must never include .cursor/hooks.json; got {:?}",
             project_strs
         );
     }
@@ -1787,11 +1806,11 @@ mod tests {
 
     #[test]
     #[serial]
-    fn discover_hooks_honors_claude_compat_gate() {
-        // Pins the single load entry point every startup/reload site uses: with
-        // `compat.claude.hooks = false` a project `.claude/settings.json` hook must
-        // NOT load, and with it true it MUST. A pager e2e is disproportionate — the
-        // spawn/agent_ops wiring just forwards the resolved compat into this entry point.
+    fn discover_hooks_claude_compat_cannot_enable_vendor_hooks() {
+        // Pins the single load entry point every startup/reload site uses:
+        // Claude hook sources are compile-time disabled, so a project
+        // `.claude/settings.json` hook must NOT load even when
+        // `compat.claude.hooks = true`.
         let _g = MarkerGuard;
         // Marker unset so the Phase-2 import cutoff doesn't independently skip
         // `.claude` — isolates the compat gate.
@@ -1832,8 +1851,8 @@ mod tests {
         compat.claude.hooks = true;
         let (reg, _errs) = crate::util::hooks::discover_hooks(Some(git_root.path()), &compat, true);
         assert!(
-            has_probe(&reg),
-            "compat.claude.hooks=true: project .claude hook must be loaded"
+            !has_probe(&reg),
+            "compat.claude.hooks=true must still not load .claude hooks in this build"
         );
     }
 

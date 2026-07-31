@@ -40,7 +40,7 @@ ${%- endif %}
 <project_instructions_spec>
 ## Project Instruction Files
 
-Repos often contain project instruction files named `AGENTS.md`, `Agents.md`, `Claude.md`, or `AGENT.md`. These files can appear anywhere within the repository. They provide instructions or context for working in the codebase.
+Repos may contain project instruction files named `AGENTS.md` (with case variants) and Grok-native Markdown rules under `.grok/rules/`. These files can appear at multiple levels of the repository. They provide instructions or context for working in the codebase.
 
 Examples of what these files contain:
 - Coding conventions and style guides
@@ -56,7 +56,7 @@ Examples of what these files contain:
 ### Precedence rules
 - More-deeply-nested project instruction files take precedence over higher-level ones when instructions conflict.
 - Direct user instructions in the chat always take precedence over any project instruction file content.
-- When working in a subdirectory below CWD, or in a directory outside the CWD path, you must check for additional project instruction files (AGENTS.md, Claude.md, etc.) that may apply to files you're editing.
+- When working in a subdirectory below CWD, or in a directory outside the CWD path, you must check for additional `AGENTS.md` and `.grok/rules/` instruction files that may apply to files you're editing.
 </project_instructions_spec>
 
 <user_info>

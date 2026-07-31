@@ -1025,7 +1025,10 @@ pub(crate) fn agent_name_after_model_switch(
 /// Strict harnesses (`codex`, …) are only compatible with
 /// themselves. Strict↔stock transitions are never compatible.
 pub(crate) fn harnesses_are_compatible(active: &str, required: &str) -> bool {
-    use xai_grok_agent::config::is_strict_harness_agent_type;
+    use xai_grok_agent::config::{is_build_disabled_agent_name, is_strict_harness_agent_type};
+    if is_build_disabled_agent_name(active) || is_build_disabled_agent_name(required) {
+        return false;
+    }
     match (
         is_strict_harness_agent_type(active),
         is_strict_harness_agent_type(required),

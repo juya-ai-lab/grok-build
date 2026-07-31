@@ -490,27 +490,26 @@ fn count_skill_subdirs(skill_dirs: &[PathBuf]) -> usize {
     skill_md_paths(skill_dirs).len()
 }
 
-fn count_md_files(dirs: &[PathBuf]) -> usize {
+fn validated_md_entries(dirs: &[PathBuf]) -> impl Iterator<Item = std::fs::DirEntry> + '_ {
     dirs.iter()
-        .flat_map(|dir| std::fs::read_dir(dir).ok())
+        .filter_map(|dir| xai_grok_config::validate_grok_path(dir))
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
         .flatten()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
-                && e.path().extension().is_some_and(|ext| ext == "md")
+            let path = e.path();
+            xai_grok_config::validate_grok_path(&path).is_some()
+                && e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                && path.extension().is_some_and(|ext| ext == "md")
         })
-        .count()
+}
+
+fn count_md_files(dirs: &[PathBuf]) -> usize {
+    validated_md_entries(dirs).count()
 }
 
 fn collect_md_names(dirs: &[PathBuf]) -> Vec<String> {
-    dirs.iter()
-        .flat_map(|dir| std::fs::read_dir(dir).ok())
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
-                && e.path().extension().is_some_and(|ext| ext == "md")
-        })
+    validated_md_entries(dirs)
         .filter_map(|e| {
             e.path()
                 .file_stem()
@@ -561,8 +560,8 @@ fn plugin_mcp_server_names(dp: &DiscoveredPlugin) -> Vec<String> {
 
 fn count_lsp_servers(dp: &DiscoveredPlugin) -> usize {
     if let Some(ref path) = dp.lsp_config_path {
-        std::fs::read_to_string(path)
-            .ok()
+        xai_grok_config::validate_grok_path(path)
+            .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
             .and_then(|v| v.as_object().map(|o| o.len()))
             .unwrap_or(0)
@@ -592,6 +591,7 @@ fn count_hook_specs(hooks_path: Option<&Path>, inline_hooks: Option<&serde_json:
     }
 
     let file_count = hooks_path
+        .and_then(xai_grok_config::validate_grok_path)
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
         .map(|v| count_in_value(&v))
@@ -602,6 +602,7 @@ fn count_hook_specs(hooks_path: Option<&Path>, inline_hooks: Option<&serde_json:
 
 /// Read MCP server names from a .mcp.json file.
 fn read_mcp_server_names(path: &Path) -> Result<Vec<String>, ()> {
+    let path = xai_grok_config::validate_grok_path(path).ok_or(())?;
     let content = std::fs::read_to_string(path).map_err(|_| ())?;
     let value: serde_json::Value = serde_json::from_str(&content).map_err(|_| ())?;
     let names = value
@@ -740,6 +741,99 @@ mod tests {
         let mut names = collect_skill_names(&dirs);
         names.sort();
         assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registry_consumers_revalidate_components_after_discovery() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin_root = tmp.path().join("ordinary-plugin");
+        let skill_dir = plugin_root.join("skills");
+        let command_dir = plugin_root.join("commands");
+        let agent_dir = plugin_root.join("agents");
+        let hooks_path = plugin_root.join("hooks.json");
+        let mcp_path = plugin_root.join("mcp.json");
+        let lsp_path = plugin_root.join("lsp.json");
+        std::fs::create_dir_all(skill_dir.join("safe-skill")).unwrap();
+        std::fs::create_dir_all(&command_dir).unwrap();
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(skill_dir.join("safe-skill/SKILL.md"), "safe").unwrap();
+        std::fs::write(command_dir.join("safe.md"), "safe").unwrap();
+        std::fs::write(agent_dir.join("safe.md"), "safe").unwrap();
+        for path in [&hooks_path, &mcp_path, &lsp_path] {
+            std::fs::write(path, "{}").unwrap();
+        }
+
+        let mut discovered = make_discovered("swapped", PluginScope::User, true);
+        discovered.root = plugin_root.clone();
+        discovered.canonical_root = dunce::canonicalize(&plugin_root).unwrap();
+        discovered.id = PluginId::new(PluginScope::User, &plugin_root, "swapped");
+        discovered.skill_dirs = vec![skill_dir.clone()];
+        discovered.command_dirs = vec![command_dir.clone()];
+        discovered.agent_dirs = vec![agent_dir.clone()];
+        discovered.hooks_path = Some(hooks_path.clone());
+        discovered.mcp_config_path = Some(mcp_path.clone());
+        discovered.lsp_config_path = Some(lsp_path.clone());
+
+        let vendor_root = tmp.path().join(".agents/plugin-components");
+        let vendor_skills = vendor_root.join("skills");
+        let vendor_commands = vendor_root.join("commands");
+        let vendor_agents = vendor_root.join("agents");
+        std::fs::create_dir_all(vendor_skills.join("leaked-skill")).unwrap();
+        std::fs::create_dir_all(&vendor_commands).unwrap();
+        std::fs::create_dir_all(&vendor_agents).unwrap();
+        std::fs::write(vendor_skills.join("leaked-skill/SKILL.md"), "leak").unwrap();
+        std::fs::write(vendor_commands.join("leaked-command.md"), "leak").unwrap();
+        std::fs::write(vendor_agents.join("leaked-agent.md"), "leak").unwrap();
+        let vendor_hooks = vendor_root.join("hooks.json");
+        let vendor_mcp = vendor_root.join("mcp.json");
+        let vendor_lsp = vendor_root.join("lsp.json");
+        std::fs::write(
+            &vendor_hooks,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"leak"}]}]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &vendor_mcp,
+            r#"{"mcpServers":{"leaked-mcp":{"command":"leak"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(&vendor_lsp, r#"{"leaked-lsp":{"command":"leak"}}"#).unwrap();
+
+        for dir in [&skill_dir, &command_dir, &agent_dir] {
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+        for path in [&hooks_path, &mcp_path, &lsp_path] {
+            std::fs::remove_file(path).unwrap();
+        }
+        for (target, alias) in [
+            (&vendor_skills, &skill_dir),
+            (&vendor_commands, &command_dir),
+            (&vendor_agents, &agent_dir),
+        ] {
+            symlink(target, alias).unwrap();
+        }
+        for (target, alias) in [
+            (&vendor_hooks, &hooks_path),
+            (&vendor_mcp, &mcp_path),
+            (&vendor_lsp, &lsp_path),
+        ] {
+            symlink(target, alias).unwrap();
+        }
+
+        let registry =
+            PluginRegistry::from_discovered(vec![discovered], &[], &["swapped".to_string()]);
+        let plugin = registry.get("swapped").unwrap();
+        assert_eq!(plugin.skill_count, 0);
+        assert_eq!(plugin.agent_count, 0);
+        assert!(plugin.skill_names.is_empty());
+        assert!(plugin.agent_names.is_empty());
+        assert_eq!(plugin.hook_count, 0);
+        assert_eq!(plugin.mcp_server_count, 0);
+        assert_eq!(plugin.lsp_server_count, 0);
+        assert_eq!(registry.mcp_server_owner("leaked-mcp"), None);
     }
 
     #[test]

@@ -958,7 +958,7 @@ mod tests {
 
     fn write_plugin(marketplace: &Path, name: &str, version: &str, marker: &str) {
         let plugin_dir = marketplace.join("plugins").join(name);
-        let manifest_dir = plugin_dir.join(".claude-plugin");
+        let manifest_dir = plugin_dir.join(".grok-plugin");
         std::fs::create_dir_all(&manifest_dir).unwrap();
         std::fs::write(
             manifest_dir.join("plugin.json"),
@@ -1269,7 +1269,7 @@ mod tests {
 
     fn write_subdir_plugin(repo: &Path, subdir: &str, name: &str, version: &str) {
         let plugin_dir = repo.join(subdir);
-        let manifest_dir = plugin_dir.join(".claude-plugin");
+        let manifest_dir = plugin_dir.join(".grok-plugin");
         std::fs::create_dir_all(&manifest_dir).unwrap();
         std::fs::write(
             manifest_dir.join("plugin.json"),
@@ -1380,7 +1380,7 @@ mod tests {
     }
 
     fn write_root_plugin(repo: &Path, name: &str, version: &str) {
-        let manifest_dir = repo.join(".claude-plugin");
+        let manifest_dir = repo.join(".grok-plugin");
         std::fs::create_dir_all(&manifest_dir).unwrap();
         std::fs::write(
             manifest_dir.join("plugin.json"),

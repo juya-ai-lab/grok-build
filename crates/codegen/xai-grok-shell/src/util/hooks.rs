@@ -15,9 +15,16 @@ pub struct HookSourcePaths {
 impl HookSourcePaths {
     /// Borrow as `HookSource` refs. Project sources are excluded when untrusted.
     pub fn as_sources(&self, include_project: bool) -> (Vec<HookSource<'_>>, Vec<HookSource<'_>>) {
-        let global = self.global.iter().map(|p| path_to_source(p)).collect();
+        let global = self
+            .global
+            .iter()
+            .filter_map(|p| allowed_path_to_source(p))
+            .collect();
         let project = if include_project {
-            self.project.iter().map(|p| path_to_source(p)).collect()
+            self.project
+                .iter()
+                .filter_map(|p| allowed_path_to_source(p))
+                .collect()
         } else {
             vec![]
         };
@@ -33,13 +40,34 @@ fn path_to_source(p: &Path) -> HookSource<'_> {
     }
 }
 
+fn allowed_path_to_source(p: &Path) -> Option<HookSource<'_>> {
+    xai_grok_config::validate_grok_path(p)?;
+    Some(path_to_source(p))
+}
+
+/// Add a hook source only after the central lexical/canonical vendor-state
+/// guard approves it. This must precede `path_to_source()`'s `is_dir()` probe.
+fn push_allowed_hook_source(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if xai_grok_config::validate_grok_path(&path).is_some() {
+        paths.push(path);
+    } else {
+        tracing::warn!(
+            path = %path.display(),
+            "refusing hook source under Claude/Codex vendor state"
+        );
+    }
+}
+
+/// Build hook source paths for global (`~/`) and project (`<git_root>/`) scopes.
+/// Callers gate project sources on trust via `as_sources(trusted)`.
 fn include_claude_hooks(compat: &xai_grok_tools::types::compat::CompatConfig) -> bool {
-    compat.claude.hooks
+    xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED
+        && compat.claude.hooks
         && !crate::claude_import::is_claude_import_marked_with_log("discover_hook_source_paths")
 }
 
 fn include_cursor_hooks(compat: &xai_grok_tools::types::compat::CompatConfig) -> bool {
-    compat.cursor.hooks
+    xai_grok_config::CURSOR_COMPAT_ENABLED && compat.cursor.hooks
 }
 
 /// Global + project hook source paths. Registry file is never a discovery
@@ -66,6 +94,7 @@ pub fn discover_hook_source_paths(
                 resolved
                     .discovery_sources()
                     .map(|s| s.path.clone())
+                    .filter(|p| xai_grok_config::validate_grok_path(p).is_some())
                     .collect()
             }
             Err(e) => {
@@ -79,23 +108,26 @@ pub fn discover_hook_source_paths(
 
     if let Some(h) = home.as_deref() {
         if include_claude {
-            global.push(h.join(".claude").join("settings.json"));
-            global.push(h.join(".claude").join("settings.local.json"));
+            push_allowed_hook_source(&mut global, h.join(".claude").join("settings.json"));
+            push_allowed_hook_source(&mut global, h.join(".claude").join("settings.local.json"));
         }
         if include_cursor {
-            global.push(h.join(".cursor").join("hooks.json"));
+            push_allowed_hook_source(&mut global, h.join(".cursor").join("hooks.json"));
         }
     }
 
     let mut project = Vec::new();
     if let Some(root) = git_root {
         if include_claude {
-            project.push(root.join(".claude").join("settings.json"));
-            project.push(root.join(".claude").join("settings.local.json"));
+            push_allowed_hook_source(&mut project, root.join(".claude").join("settings.json"));
+            push_allowed_hook_source(
+                &mut project,
+                root.join(".claude").join("settings.local.json"),
+            );
         }
-        project.push(root.join(".grok").join("hooks"));
+        push_allowed_hook_source(&mut project, root.join(".grok").join("hooks"));
         if include_cursor {
-            project.push(root.join(".cursor").join("hooks.json"));
+            push_allowed_hook_source(&mut project, root.join(".cursor").join("hooks.json"));
         }
     }
 
@@ -104,7 +136,9 @@ pub fn discover_hook_source_paths(
 
 /// Single load entry point: build compat-aware sources, gate project sources on
 /// trust, then load. Every session-startup and mid-session reload site routes
-/// through here so the source policy stays in one place.
+/// through here so the source policy stays in one place. `discover_hook_source_paths`
+/// and `HookSourcePaths::as_sources` stay public for the build-gated `inspect`
+/// path and the unit tests that assert on the raw source lists.
 pub fn discover_hooks(
     git_root: Option<&Path>,
     compat: &xai_grok_tools::types::compat::CompatConfig,
@@ -143,4 +177,44 @@ pub fn assemble_hooks(
         xai_grok_hooks::discovery::registry_from_specs_deduped(specs),
         errors,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_grok_hooks_directory_is_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hooks = tmp.path().join(".grok").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+
+        let sources = discover_hook_source_paths(
+            Some(tmp.path()),
+            &xai_grok_tools::types::compat::CompatConfig::default(),
+        );
+        assert!(sources.project.contains(&hooks));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_grok_hooks_symlink_into_vendor_state_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_hooks = tmp.path().join(".claude").join("hooks");
+        std::fs::create_dir_all(tmp.path().join(".grok")).unwrap();
+        std::fs::create_dir_all(&vendor_hooks).unwrap();
+        symlink(&vendor_hooks, tmp.path().join(".grok").join("hooks")).unwrap();
+
+        let sources = discover_hook_source_paths(
+            Some(tmp.path()),
+            &xai_grok_tools::types::compat::CompatConfig::default(),
+        );
+        assert!(
+            !sources
+                .project
+                .contains(&tmp.path().join(".grok").join("hooks"))
+        );
+    }
 }

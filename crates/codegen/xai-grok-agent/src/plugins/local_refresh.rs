@@ -95,6 +95,15 @@ fn refresh_local_installs(
         expected,
     } in targets
     {
+        if xai_grok_config::validate_grok_path(&source_path).is_none() {
+            tracing::warn!(
+                repo_key = %key,
+                path = %source_path.display(),
+                "refusing to refresh plugin from Claude/Codex vendor state"
+            );
+            summary.skipped += 1;
+            continue;
+        }
         let refreshable =
             TrustStore::is_config_path_auto_trusted(&source_path) || trust.is_trusted(&source_path);
         if !source_path.is_dir() || !refreshable {
@@ -405,7 +414,7 @@ mod tests {
     #[serial(home_env)]
     fn refresh_local_install_picks_up_new_agent() {
         let (_home_tmp, home, _home_guard) = home_tempdir();
-        let source = home.join(".claude").join("demo-plugin");
+        let source = home.join("local-plugins").join("demo-plugin");
         write_plugin_json(&source, "demo-plugin");
         write_agent_md(&source, "old");
 
@@ -425,7 +434,7 @@ mod tests {
     #[serial(home_env)]
     fn refresh_skips_unchanged_source() {
         let (_home_tmp, home, _home_guard) = home_tempdir();
-        let source = home.join(".claude").join("demo-plugin");
+        let source = home.join("local-plugins").join("demo-plugin");
         write_plugin_json(&source, "demo-plugin");
         write_agent_md(&source, "old");
 
@@ -448,7 +457,7 @@ mod tests {
     #[serial(home_env)]
     fn refresh_picks_up_content_preserving_rename() {
         let (_home_tmp, home, _home_guard) = home_tempdir();
-        let source = home.join(".claude").join("demo-plugin");
+        let source = home.join("local-plugins").join("demo-plugin");
         write_plugin_json(&source, "demo-plugin");
         write_agent_md(&source, "old");
 
@@ -477,7 +486,7 @@ mod tests {
     #[serial(home_env)]
     fn refresh_promote_failure_rolls_back_to_prior_snapshot() {
         let (_home_tmp, home, _home_guard) = home_tempdir();
-        let source = home.join(".claude").join("demo-plugin");
+        let source = home.join("local-plugins").join("demo-plugin");
         write_plugin_json(&source, "demo-plugin");
         write_agent_md(&source, "old");
 

@@ -120,7 +120,9 @@ fn discover_servers(cwd: &Path) -> (Vec<ConfigSourceStatus>, Vec<DiscoveredServe
         &plugin_config.enabled,
     );
 
-    // mcp-doctor is a diagnostic tool; use default (all-on) compat to show everything.
+    // Diagnostics must honor the same build-wide compatibility policy as a
+    // live session; they must never probe disabled vendor state just to report
+    // that it exists.
     let sourced = crate::session::managed_mcp::merge_managed_mcp_servers_sourced(
         cwd,
         Some(&plugin_registry),
@@ -128,15 +130,11 @@ fn discover_servers(cwd: &Path) -> (Vec<ConfigSourceStatus>, Vec<DiscoveredServe
     );
 
     let mut config_count = 0usize;
-    let mut claude_count = 0usize;
-    let mut mcp_json_count = 0usize;
     let mut plugin_counts: HashMap<String, usize> = HashMap::new();
     let mut servers = Vec::new();
     for (server, source) in sourced {
         match &source {
             ConfigSource::ConfigToml { .. } | ConfigSource::Project { .. } => config_count += 1,
-            ConfigSource::ClaudeJson { .. } => claude_count += 1,
-            ConfigSource::McpJson { .. } => mcp_json_count += 1,
             ConfigSource::Plugin { plugin_name, .. } => {
                 *plugin_counts.entry(plugin_name.clone()).or_default() += 1;
             }
@@ -181,59 +179,12 @@ fn discover_servers(cwd: &Path) -> (Vec<ConfigSourceStatus>, Vec<DiscoveredServe
         });
     }
 
-    let claude_imported = crate::claude_import::is_claude_import_marked();
-    if claude_imported {
-        sources.push(ConfigSourceStatus {
-            path: "~/.claude.json".to_string(),
-            status: ConfigSourceState::Skipped {
-                reason: "claude_compat imported = true".to_string(),
-            },
-        });
-    } else if let Some(home) = dirs::home_dir() {
-        let claude_path = home.join(".claude.json");
-        if claude_path.is_file() {
-            sources.push(ConfigSourceStatus {
-                path: "~/.claude.json".to_string(),
-                status: ConfigSourceState::Found {
-                    server_count: claude_count,
-                },
-            });
-        } else {
-            sources.push(ConfigSourceStatus {
-                path: "~/.claude.json".to_string(),
-                status: ConfigSourceState::NotFound,
-            });
-        }
-    } else {
-        sources.push(ConfigSourceStatus {
-            path: "~/.claude.json".to_string(),
-            status: ConfigSourceState::NotFound,
-        });
-    }
-
-    if claude_imported {
-        sources.push(ConfigSourceStatus {
-            path: ".mcp.json".to_string(),
-            status: ConfigSourceState::Skipped {
-                reason: "claude_compat imported = true".to_string(),
-            },
-        });
-    } else {
-        let mcp_json_files = crate::util::config::find_mcp_json_files(cwd);
-        if mcp_json_files.is_empty() {
-            sources.push(ConfigSourceStatus {
-                path: ".mcp.json".to_string(),
-                status: ConfigSourceState::NotFound,
-            });
-        } else {
-            sources.push(ConfigSourceStatus {
-                path: ".mcp.json".to_string(),
-                status: ConfigSourceState::Found {
-                    server_count: mcp_json_count,
-                },
-            });
-        }
-    }
+    sources.push(ConfigSourceStatus {
+        path: ".mcp.json".to_string(),
+        status: ConfigSourceState::Skipped {
+            reason: "Claude Code compatibility is build-disabled".to_string(),
+        },
+    });
 
     (sources, servers)
 }

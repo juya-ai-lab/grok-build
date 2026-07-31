@@ -75,8 +75,7 @@ macro_rules! hook_events {
                         .join(", ");
                     serde::de::Error::custom(format!(
                         "unknown hook event: '{s}'. Expected one of: {known} \
-                         (camelCase and per-operation aliases such as \
-                         beforeShellExecution are also accepted)"
+                         (camelCase and per-operation aliases are not accepted)"
                     ))
                 })
             }
@@ -89,48 +88,32 @@ macro_rules! hook_events {
 hook_events! {
     SessionStart {
         display: "session_start",
-        aliases: ["SessionStart", "session_start", "sessionStart"],
+        aliases: ["SessionStart", "session_start"],
         traits: (Observe, Tested, true),
     },
     UserPromptSubmit {
         display: "user_prompt_submit",
-        aliases: ["UserPromptSubmit", "user_prompt_submit", "beforeSubmitPrompt"],
+        aliases: ["UserPromptSubmit", "user_prompt_submit"],
         traits: (Observe, Ignored, true),
     },
     PreToolUse {
         display: "pre_tool_use",
-        aliases: [
-            "PreToolUse",
-            "pre_tool_use",
-            "preToolUse",
-            "beforeShellExecution",
-            "beforeMCPExecution",
-            "beforeReadFile",
-        ],
+        aliases: ["PreToolUse", "pre_tool_use"],
         traits: (Tool, Tested, false),
     },
     PostToolUse {
         display: "post_tool_use",
-        aliases: [
-            "PostToolUse",
-            "post_tool_use",
-            "postToolUse",
-            "afterShellExecution",
-            "afterMCPExecution",
-            "afterFileEdit",
-            "afterAgentResponse",
-            "afterAgentThought",
-        ],
+        aliases: ["PostToolUse", "post_tool_use"],
         traits: (Observe, Tested, true),
     },
     PostToolUseFailure {
         display: "post_tool_use_failure",
-        aliases: ["PostToolUseFailure", "post_tool_use_failure", "postToolUseFailure"],
+        aliases: ["PostToolUseFailure", "post_tool_use_failure"],
         traits: (Observe, Tested, true),
     },
     PermissionDenied {
         display: "permission_denied",
-        aliases: ["PermissionDenied", "permission_denied", "permissionDenied"],
+        aliases: ["PermissionDenied", "permission_denied"],
         traits: (Observe, Tested, true),
     },
     /// Fires on a genuine turn-end with stop decision control (a hook can block);
@@ -143,7 +126,7 @@ hook_events! {
     /// Fires when the turn ends due to an API error. Output and exit code are ignored.
     StopFailure {
         display: "stop_failure",
-        aliases: ["StopFailure", "stop_failure", "stopFailure"],
+        aliases: ["StopFailure", "stop_failure"],
         traits: (Observe, Tested, true),
     },
     Notification {
@@ -153,12 +136,12 @@ hook_events! {
     },
     SubagentStart {
         display: "subagent_start",
-        aliases: ["SubagentStart", "subagent_start", "subagentStart"],
+        aliases: ["SubagentStart", "subagent_start"],
         traits: (Observe, Tested, true),
     },
     SubagentStop {
         display: "subagent_stop",
-        aliases: ["SubagentStop", "subagent_stop", "subagentStop"],
+        aliases: ["SubagentStop", "subagent_stop"],
         traits: (Stop, Tested, true),
     },
     /// Legacy alias of `SubagentStop`: kept as a distinct variant so a hook
@@ -166,22 +149,22 @@ hook_events! {
     /// [`HookEventName::canonical`] for dispatch and dedup.
     SubagentEnd {
         display: "subagent_stop",
-        aliases: ["SubagentEnd", "subagent_end", "subagentEnd"],
+        aliases: ["SubagentEnd", "subagent_end"],
         traits: (Stop, Tested, true),
     },
     PreCompact {
         display: "pre_compact",
-        aliases: ["PreCompact", "pre_compact", "preCompact"],
+        aliases: ["PreCompact", "pre_compact"],
         traits: (Observe, Tested, true),
     },
     PostCompact {
         display: "post_compact",
-        aliases: ["PostCompact", "post_compact", "postCompact"],
+        aliases: ["PostCompact", "post_compact"],
         traits: (Observe, Tested, true),
     },
     SessionEnd {
         display: "session_end",
-        aliases: ["SessionEnd", "session_end", "sessionEnd"],
+        aliases: ["SessionEnd", "session_end"],
         traits: (Observe, Tested, true),
     },
 }
@@ -625,28 +608,30 @@ mod tests {
     }
 
     #[test]
-    fn event_name_deser_camel_and_operation_aliases() {
-        let cases: &[(&str, HookEventName)] = &[
-            ("sessionStart", HookEventName::SessionStart),
-            ("preToolUse", HookEventName::PreToolUse),
-            ("beforeShellExecution", HookEventName::PreToolUse),
-            ("beforeMCPExecution", HookEventName::PreToolUse),
-            ("beforeReadFile", HookEventName::PreToolUse),
-            ("postToolUse", HookEventName::PostToolUse),
-            ("afterShellExecution", HookEventName::PostToolUse),
-            ("afterMCPExecution", HookEventName::PostToolUse),
-            ("afterFileEdit", HookEventName::PostToolUse),
-            ("afterAgentResponse", HookEventName::PostToolUse),
-            ("afterAgentThought", HookEventName::PostToolUse),
-            ("beforeSubmitPrompt", HookEventName::UserPromptSubmit),
-            ("subagentStop", HookEventName::SubagentStop),
-            ("subagentEnd", HookEventName::SubagentEnd),
-            ("preCompact", HookEventName::PreCompact),
-            ("stopFailure", HookEventName::StopFailure),
-        ];
-        for (spelling, expected) in cases {
-            let parsed: HookEventName = serde_json::from_str(&format!("\"{spelling}\"")).unwrap();
-            assert_eq!(parsed, *expected, "alias deser failed for {spelling}");
+    fn event_name_rejects_camel_and_operation_aliases() {
+        for spelling in [
+            "sessionStart",
+            "preToolUse",
+            "beforeShellExecution",
+            "beforeMCPExecution",
+            "beforeReadFile",
+            "postToolUse",
+            "afterShellExecution",
+            "afterMCPExecution",
+            "afterFileEdit",
+            "afterAgentResponse",
+            "afterAgentThought",
+            "beforeSubmitPrompt",
+            "subagentStop",
+            "subagentEnd",
+            "preCompact",
+            "stopFailure",
+        ] {
+            let result = serde_json::from_str::<HookEventName>(&format!("\"{spelling}\""));
+            assert!(
+                result.is_err(),
+                "camelCase/per-operation alias must be rejected: {spelling}"
+            );
         }
     }
 

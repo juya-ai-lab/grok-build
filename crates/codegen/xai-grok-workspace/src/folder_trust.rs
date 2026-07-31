@@ -303,6 +303,17 @@ fn directory_present_or_uncertain(path: &Path) -> bool {
 /// `first_only` it returns immediately after the first marker (the gate's
 /// historical short-circuit); otherwise it collects every distinct kind.
 fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> {
+    // Reject the root itself before git discovery or any marker probe.  The
+    // per-file validators below protect reads, but without this boundary a
+    // session opened inside CODEX_HOME/~/.codex/~/.agents could still leak
+    // repository and file-presence metadata.
+    if xai_grok_config::validate_grok_path(cwd).is_none() {
+        tracing::warn!(
+            path = %cwd.display(),
+            "refusing folder-trust scan inside Claude/Codex vendor state"
+        );
+        return Vec::new();
+    }
     // Resolve the git root + cwd→root dir chain ONCE and reuse it across the
     // git2-based marker checks below: this gate does 1 git2 discover + 1 git2
     // walk (+ the settings-compat path's own cheap `.git`-existence walk, intentionally separate —
@@ -367,11 +378,8 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     if cwd.join(".grok").join("lsp.json").is_file() {
         hit!("lsp");
     }
-    // Project `.cursor/mcp.json` — vendor MCP loading is default-on and tagged
-    // `Project`, so a repo shipping ONLY this file must still be gated. (File
-    // presence is enough; if the `.cursor` compat flag is off the servers won't
-    // spawn and gating is a harmless no-op.)
-    if cwd.join(".cursor").join("mcp.json").is_file() {
+    // Cursor MCP compatibility is build-disabled; never probe its state.
+    if xai_grok_config::CURSOR_COMPAT_ENABLED && cwd.join(".cursor").join("mcp.json").is_file() {
         hit!("mcp");
     }
     // Project `.envrc` — auto-sourced in a bash subshell when `direnv` isn't
@@ -400,7 +408,8 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     // gate" check.
     let hook_root = chain.git_root.as_deref().unwrap_or(cwd);
     if path_present_or_uncertain(&hook_root.join(".grok").join("hooks"))
-        || hook_root.join(".cursor").join("hooks.json").is_file()
+        || (xai_grok_config::CURSOR_COMPAT_ENABLED
+            && hook_root.join(".cursor").join("hooks.json").is_file())
     {
         hit!("hooks");
     }
@@ -444,6 +453,9 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
 /// [`claude_project_mcp_present`] (existence) and the shell's
 /// `project_scoped_mcp_names` (the names) derive from, so the two never drift.
 pub fn claude_project_mcp_names(cwd: &Path) -> Option<Vec<String>> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        return None;
+    }
     let home = dirs::home_dir()?;
     let content = std::fs::read_to_string(home.join(".claude.json")).ok()?;
     let value = serde_json::from_str::<serde_json::Value>(&content).ok()?;
@@ -604,12 +616,12 @@ mod tests {
     }
 
     #[test]
-    fn repo_configs_present_detects_cursor_mcp_json() {
+    fn repo_configs_present_ignores_cursor_mcp_json() {
         let tmp = repo_tmp();
         let cursor = tmp.path().join(".cursor");
         std::fs::create_dir_all(&cursor).unwrap();
         std::fs::write(cursor.join("mcp.json"), "{}").unwrap();
-        assert!(repo_configs_present(tmp.path()));
+        assert!(!repo_configs_present(tmp.path()));
     }
 
     #[test]
@@ -632,11 +644,22 @@ mod tests {
     }
 
     #[test]
-    fn repo_configs_present_detects_claude_agents() {
-        // `.claude/agents` is the vendor-compat project agent dir; same gate.
+    fn repo_config_scan_rejects_vendor_state_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_repo = tmp.path().join(".codex").join("project");
+        std::fs::create_dir_all(&vendor_repo).unwrap();
+        git2::Repository::init(&vendor_repo).unwrap();
+        std::fs::write(vendor_repo.join(".mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
+
+        assert!(!repo_configs_present(&vendor_repo));
+        assert!(repo_config_kinds(&vendor_repo).is_empty());
+    }
+
+    #[test]
+    fn repo_configs_present_ignores_build_disabled_claude_agents() {
         let tmp = repo_tmp();
         std::fs::create_dir_all(tmp.path().join(".claude").join("agents")).unwrap();
-        assert!(repo_configs_present(tmp.path()));
+        assert!(!repo_configs_present(tmp.path()));
     }
 
     #[test]
@@ -710,6 +733,16 @@ mod tests {
     }
 
     #[test]
+    fn repo_configs_present_ignores_build_disabled_claude_settings_from_subdir() {
+        let tmp = repo_tmp();
+        let subdir = tmp.path().join("crates").join("inner");
+        let claude = subdir.join(".claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(claude.join("settings.json"), r#"{"env":{"X":"1"}}"#).unwrap();
+        assert!(!repo_configs_present(&subdir));
+    }
+
+    #[test]
     fn repo_configs_present_detects_project_workflows_from_subdir() {
         let tmp = repo_tmp();
         std::fs::create_dir_all(tmp.path().join(".grok").join("workflows")).unwrap();
@@ -717,20 +750,6 @@ mod tests {
         std::fs::create_dir_all(&subdir).unwrap();
         assert!(repo_configs_present(&subdir));
         assert!(repo_config_kinds(&subdir).contains(&"workflows"));
-    }
-
-    #[test]
-    fn repo_configs_present_detects_claude_settings_from_subdir() {
-        // A `.claude/settings.json` `env` in a SUBDIR (no other repo config),
-        // launched from that subdir, must be detected: the env loader walks
-        // cwd→repo-root, so detection walks the same path (a git-root-only probe
-        // would miss it and leave the env injectable ungated).
-        let tmp = repo_tmp();
-        let subdir = tmp.path().join("crates").join("inner");
-        let claude = subdir.join(".claude");
-        std::fs::create_dir_all(&claude).unwrap();
-        std::fs::write(claude.join("settings.json"), r#"{"env":{"X":"1"}}"#).unwrap();
-        assert!(repo_configs_present(&subdir));
     }
 
     #[test]

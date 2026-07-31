@@ -1189,12 +1189,10 @@ pub fn remove_toml_marketplace_block(content: &str, source_identity: &str) -> Op
 }
 
 /// Try removing a source from `settings.json` / `known_marketplaces.json` under
-/// `~/.grok/` and `~/.claude/`. Returns `true` if removed from at least one file.
+/// the Grok home directory. Returns `true` if removed from at least one file.
 pub fn try_remove_source_from_json_files(source_url_or_path: &str) -> bool {
-    // Resolve user grok via user_grok_home() (None when no home resolves) and
-    // home separately, so removal still runs from $GROK_HOME when no home dir
-    // exists, and never touches a cwd-relative .grok.
-    let home = dirs::home_dir();
+    // Resolve user grok via user_grok_home() so removal still runs from
+    // $GROK_HOME when no home dir exists and never touches a cwd-relative .grok.
     let grok = xai_grok_config::user_grok_home();
 
     let mut settings_candidates: Vec<std::path::PathBuf> = Vec::new();
@@ -1202,21 +1200,10 @@ pub fn try_remove_source_from_json_files(source_url_or_path: &str) -> bool {
         settings_candidates.push(grok.join("settings.local.json"));
         settings_candidates.push(grok.join("settings.json"));
     }
-    if let Some(ref home) = home {
-        settings_candidates.push(home.join(".claude").join("settings.local.json"));
-        settings_candidates.push(home.join(".claude").join("settings.json"));
-    }
 
     let mut known_candidates: Vec<std::path::PathBuf> = Vec::new();
     if let Some(ref grok) = grok {
         known_candidates.push(grok.join("plugins").join("known_marketplaces.json"));
-    }
-    if let Some(ref home) = home {
-        known_candidates.push(
-            home.join(".claude")
-                .join("plugins")
-                .join("known_marketplaces.json"),
-        );
     }
 
     let mut removed = false;
@@ -2098,7 +2085,7 @@ mod tests {
 
     fn write_marketplace_plugin(marketplace: &Path, name: &str, version: &str) {
         let plugin_dir = marketplace.join("plugins").join(name);
-        let manifest_dir = plugin_dir.join(".claude-plugin");
+        let manifest_dir = plugin_dir.join(".grok-plugin");
         std::fs::create_dir_all(&manifest_dir).unwrap();
         std::fs::write(
             manifest_dir.join("plugin.json"),
