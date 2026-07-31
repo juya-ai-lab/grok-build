@@ -19,8 +19,9 @@
 #   2) Actions tab -> Release -> Run workflow -> optionally enter a tag -> run
 #      (web-only path; no git client needed. Leave the tag empty to derive it
 #      from the version crate manifest (VERSION_CRATE_MANIFEST). The tag is
-#      created up front (when missing) at the built commit; GITHUB_TOKEN-
-#      created refs do not re-trigger the push workflow.)
+#      created up front (when missing) at the built commit; an existing tag
+#      must point at the built commit or the run fails. GITHUB_TOKEN-created
+#      refs do not re-trigger the push workflow.)
 
 name: Release
 
@@ -104,11 +105,22 @@ jobs:
             echo "Tag-push run: tag ${TAG} already exists by definition."
             exit 0
           fi
-          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
-            echo "Tag ${TAG} already exists on origin; not re-creating it."
-            exit 0
+          # Peel annotated tags to their commit (^{}); lightweight tags have
+          # no peeled ref, so fall back to the plain ref which is the commit sha.
+          existing="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | awk '{print $1}' | tail -1)"
+          if [ -z "$existing" ]; then
+            existing="$(git ls-remote --tags origin "refs/tags/${TAG}" | awk '{print $1}' | tail -1)"
           fi
-          git tag "${TAG}"
+          if [ -n "$existing" ]; then
+            head="$(git rev-parse HEAD)"
+            if [ "$existing" = "$head" ]; then
+              echo "Tag ${TAG} already exists at the built commit ${head}; reusing it."
+              exit 0
+            fi
+            echo "Tag ${TAG} already exists at ${existing}, but this run builds ${head}. Refusing to attach new binaries to a tag that points elsewhere; pick a new version tag or delete the old one first." >&2
+            exit 1
+          fi
+          git tag "${TAG}" 2>/dev/null || git tag -f "${TAG}"
           git push origin "${TAG}"
           echo "Created and pushed tag ${TAG} at $(git rev-parse HEAD)."
 
