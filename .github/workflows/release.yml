@@ -365,7 +365,11 @@ jobs:
           # when the tag already exists (tag-push runs).
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          update_release: true
+          # GITHUB_TOKEN cannot be granted the Workflows write permission that
+          # GitHub now requires when the released commit touches .github/workflows;
+          # RELEASE_TOKEN is a fine-grained PAT scoped to this repo with
+          # Contents + Workflows write.
+          token: ${{ secrets.RELEASE_TOKEN }}
           # Re-running / partial matrices should attach newly built assets.
           fail_on_unmatched_files: false
           files: |
