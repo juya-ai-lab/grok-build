@@ -143,6 +143,7 @@ jobs:
       # (Windows compiles directly; its sccache server crashes on the large
       # crates). Per-target keys avoid matrix-leg write races; the repo-wide
       # GHA cache is 10 GB, so stale entries are evicted LRU.
+      # 1024 MiB per target keeps the six sccache buckets within that budget.
       CARGO_CACHE_SHARED_KEY: release-shared
     strategy:
       fail-fast: false
@@ -213,7 +214,7 @@ jobs:
         run: |
           echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
           echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          echo "SCCACHE_GHA_CACHE_SIZE=1536" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_CACHE_SIZE=1024" >> "$GITHUB_ENV"
           echo "SCCACHE_GHA_CACHE_TO=sccache-${{ matrix.target }}" >> "$GITHUB_ENV"
           echo "SCCACHE_GHA_CACHE_FROM=sccache-${{ matrix.target }}" >> "$GITHUB_ENV"
 
