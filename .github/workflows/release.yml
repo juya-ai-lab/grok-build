@@ -190,7 +190,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Cache Protoc
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         with:
           path: ${{ runner.temp }}/protoc-*
           key: protoc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/protoc') }}
@@ -201,6 +201,10 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Setup sccache
+        # sccache's server has been observed crashing mid-compile on the
+        # xai-grok-shell crate on Windows runners (connection reset); those
+        # platforms compile directly instead.
+        if: runner.os != 'Windows'
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: Cache Cargo Registry
@@ -239,6 +243,7 @@ jobs:
           du -sh target 2>/dev/null || true
 
       - name: Show sccache Statistics
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -422,7 +427,7 @@ jobs:
 
       - name: Attest Build Provenance
         if: steps.assets.outputs.has_assets == 'true'
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v5.1.0
         with:
           subject-path: |
             artifacts/grok-*

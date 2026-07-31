@@ -47,14 +47,14 @@ jobs:
           persist-credentials: false
 
       - name: Restore Pip Cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         id: cache-pip
         with:
           path: ~/.cache/pip
           key: lint-pip-${{ runner.os }}
 
       - name: Restore Cargo-Deny Data Cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         id: cache-deny
         with:
           path: |
@@ -66,7 +66,7 @@ jobs:
             lint-cargo-${{ runner.os }}-
 
       - name: Restore Actionlint Cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         id: cache-actionlint
         with:
           path: ~/.local/bin/actionlint
@@ -115,14 +115,14 @@ jobs:
 
       - name: Save Pip Cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cache-pip.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         with:
           path: ~/.cache/pip
           key: lint-pip-${{ runner.os }}
 
       - name: Save Cargo-Deny Data Cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cache-deny.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         with:
           path: |
             ~/.cargo/advisory-dbs
@@ -132,7 +132,7 @@ jobs:
 
       - name: Save Actionlint Cache (main only)
         if: github.ref == 'refs/heads/main' && steps.cache-actionlint.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
         with:
           path: ~/.local/bin/actionlint
           key: actionlint-${{ runner.os }}-1.7.12
