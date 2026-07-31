@@ -1,0 +1,73 @@
+# Lint the workflow files themselves (actionlint, zizmor) and scan the
+# dependency tree (cargo-deny). Cheap enough to run on every push/PR.
+
+name: CI - Workflow and Dependency Checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/dependabot.yml
+      - .github/zizmor.yml
+      - deny.toml
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - rust-toolchain.toml
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - .github/actions/**
+      - .github/dependabot.yml
+      - .github/zizmor.yml
+      - deny.toml
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - rust-toolchain.toml
+  workflow_dispatch:
+
+concurrency:
+  # Keep only the latest run per branch/PR; a new push cancels the stale one.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint Workflows and Dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
+        with:
+          tool: actionlint
+
+      - name: Run actionlint
+        shell: bash
+        run: actionlint
+
+      - name: Install zizmor
+        shell: bash
+        run: python3 -m pip install --break-system-packages --quiet zizmor
+
+      - name: Run zizmor
+        shell: bash
+        run: zizmor .github/workflows
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2.85.5
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo-deny
+        shell: bash
+        run: cargo deny check

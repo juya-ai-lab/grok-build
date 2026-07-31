@@ -23,7 +23,7 @@
 #      must point at the built commit or the run fails. GITHUB_TOKEN-created
 #      refs do not re-trigger the push workflow.)
 
-name: Release
+name: CI - Release
 
 on:
   push:
@@ -36,8 +36,6 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -58,23 +56,27 @@ env:
 
 jobs:
   prepare:
-    name: Resolve version and create tag
+    name: Prepare Release (Resolve Version, Create Tag)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Resolve version
+      - name: Resolve Version
         id: ver
         shell: bash
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF_NAME}"
           else
-            tag="${{ inputs.tag }}"
+            tag="${TAG_INPUT}"
             if [ -z "$tag" ]; then
               version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$VERSION_CRATE_MANIFEST" | head -1)"
               if [ -z "$version" ]; then
@@ -95,7 +97,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Create tag if missing
+      - name: Create Tag if Missing
         shell: bash
         env:
           TAG: ${{ steps.ver.outputs.tag }}
@@ -125,10 +127,13 @@ jobs:
           echo "Created and pushed tag ${TAG} at $(git rev-parse HEAD)."
 
   build:
-    name: build (${{ matrix.platform }})
+    name: Build Release Binaries (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     needs: prepare
     timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: write
     env:
       # Compile cache shared across release runs (sccache, GHA backend).
       # Per-target keys avoid matrix-leg write races; the repo-wide GHA cache
@@ -182,24 +187,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Cache protoc
-        uses: actions/cache@v4
+      - name: Cache Protoc
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/protoc-*
           key: protoc-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/protoc') }}
 
-      - name: Setup protoc + Rust
+      - name: Setup Protoc and Rust
         uses: ./.github/actions/setup-build
         with:
           targets: ${{ matrix.target }}
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Cache Cargo Registry
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: release-${{ matrix.target }}
           # Only cache registry/git — full target/ restores spike disk on LTO builds.
@@ -207,7 +212,7 @@ jobs:
           cache-on-failure: true
           shared-key: ${{ env.CARGO_CACHE_SHARED_KEY }}
 
-      - name: Build release-dist binary
+      - name: Build Release Binary
         shell: bash
         env:
           GROK_VERSION: ${{ needs.prepare.outputs.version }}
@@ -233,7 +238,7 @@ jobs:
           df -h . || df -h || true
           du -sh target 2>/dev/null || true
 
-      - name: Show sccache stats
+      - name: Show sccache Statistics
         shell: bash
         run: |
           set -euo pipefail
@@ -243,7 +248,7 @@ jobs:
             sccache --show-stats 2>/dev/null || echo "sccache not available"
           fi
 
-      - name: Package artifact
+      - name: Package Artifact
         id: pkg
         shell: bash
         env:
@@ -284,14 +289,15 @@ jobs:
           echo "asset=${asset}" >> "$GITHUB_OUTPUT"
           echo "asset_path=dist/${asset}" >> "$GITHUB_OUTPUT"
 
-      - name: Smoke test (--version)
+      - name: Smoke Test (--version)
         if: matrix.can_run
         shell: bash
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          BIN_PATH: ${{ steps.pkg.outputs.asset_path }}
         run: |
           set -euo pipefail
-          bin="${{ steps.pkg.outputs.asset_path }}"
+          bin="${BIN_PATH}"
           out="$("$bin" --version </dev/null 2>&1)" || {
             echo "Binary failed to execute: $bin" >&2
             exit 1
@@ -302,7 +308,7 @@ jobs:
             echo "Continuing — binary still packaged." >&2
           fi
 
-      - name: Drop cargo target directory
+      - name: Drop Cargo Target Directory
         shell: bash
         run: |
           set -euo pipefail
@@ -315,8 +321,8 @@ jobs:
           df -h . || df -h || true
           ls -lh dist/ || true
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v6
+      - name: Upload Binary Artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: binary-${{ matrix.platform }}
           path: ${{ steps.pkg.outputs.asset_path }}
@@ -325,10 +331,15 @@ jobs:
           retention-days: 7
 
   release:
-    name: publish GitHub Release
+    name: Publish GitHub Release
     needs: [build, prepare]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+      attestations: write
+      id-token: write
     # Publish any successful platform artifacts even when other matrix legs fail.
     # Skip only if the whole run was cancelled or nothing reached upload.
     if: >-
@@ -339,8 +350,8 @@ jobs:
       && needs.build.result != 'cancelled'
 
     steps:
-      - name: Download successful binaries
-        uses: actions/download-artifact@v8
+      - name: Download Successful Binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: binary-*
           path: artifacts
@@ -348,7 +359,7 @@ jobs:
           # OK if some platforms never uploaded; we publish what exists.
           if-no-files-found: warn
 
-      - name: Collect assets and checksums
+      - name: Collect Assets and Checksums
         id: assets
         shell: bash
         env:
@@ -395,9 +406,9 @@ jobs:
           fi
           echo "has_assets=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create or update GitHub Release
+      - name: Create or Update GitHub Release
         if: steps.assets.outputs.has_assets == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: v${{ needs.prepare.outputs.version }}
           name: v${{ needs.prepare.outputs.version }}
@@ -408,5 +419,11 @@ jobs:
           # Re-running / partial matrices should attach newly built assets.
           fail_on_unmatched_files: false
           files: |
+
+      - name: Attest Build Provenance
+        if: steps.assets.outputs.has_assets == 'true'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: |
             artifacts/grok-*
             artifacts/SHA256SUMS

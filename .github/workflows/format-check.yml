@@ -1,0 +1,55 @@
+# Formatting gate: fast, single-platform check that catches rustfmt drift
+# before release. Deliberately no cargo check/clippy here — those are heavy
+# and are run manually when needed.
+
+name: CI - Format Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - rust-toolchain.toml
+      - rustfmt.toml
+      - .github/workflows/format-check.yml
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - rust-toolchain.toml
+      - rustfmt.toml
+      - .github/workflows/format-check.yml
+  workflow_dispatch:
+
+concurrency:
+  # Keep only the latest run per branch/PR; a new push cancels the stale one.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Verify Code Formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          # Keep in sync with rust-toolchain.toml.
+          toolchain: "1.92.0"
+          components: rustfmt
+
+      - name: Verify Code Formatting
+        shell: bash
+        run: cargo fmt --all --check

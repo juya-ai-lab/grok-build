@@ -1,0 +1,19 @@
+# zizmor configuration: documented exceptions for the release pipeline.
+rules:
+  # The prepare job intentionally checks out with persisted credentials so it
+  # can push the release tag with GITHUB_TOKEN; the build job also uses the
+  # default checkout across the matrix.
+  artipacked:
+    ignore:
+      - release.yml
+  # Release caches (sccache/cargo registry) are only used by tag-push and
+  # workflow_dispatch runs with write access; no PR-triggered workflow shares
+  # these cache keys.
+  cache-poisoning:
+    ignore:
+      - release.yml
+  # softprops/action-gh-release is kept because the publish job updates
+  # existing releases and handles partial matrix uploads.
+  superfluous-actions:
+    ignore:
+      - release.yml

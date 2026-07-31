@@ -1,0 +1,45 @@
+# Dependency audit policy for cargo-deny (CI - Workflow and Dependency Checks).
+#
+# cargo-deny >= 0.20: every license must be explicitly listed in `allow`
+# (or an exception); anything else is denied. This list was generated from
+# the current Cargo.lock (Linux host + dev targets, as analyzed in CI).
+
+[advisories]
+# Unmaintained advisories only fail when the crate is a direct dependency of
+# the workspace; transitive-only reports stay as warnings.
+unmaintained = "workspace"
+# Existing vulnerability/unsound advisories in the pinned upstream tree.
+# cargo-deny 0.20 has no warn level for these, so they are recorded here
+# until the upstream dependency tree catches up; re-check periodically.
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0008", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0097", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0183", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0184", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0190", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0194", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0195", reason = "transitive upstream dep; revisit after upstream update" },
+    { id = "RUSTSEC-2026-0204", reason = "transitive upstream dep; revisit after upstream update" },
+]
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
