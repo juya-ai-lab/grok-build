@@ -540,9 +540,6 @@ static MARKER_CACHE: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(No
 /// Use the bare version for read-time display logic that already has its own
 /// path (e.g. UI listings in `extensions/skills.rs` and `inspect.rs`).
 pub fn is_claude_import_marked() -> bool {
-    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
-        return true;
-    }
     if let Some(v) = *MARKER_CACHE.read().expect("MARKER_CACHE poisoned") {
         return v;
     }
@@ -565,28 +562,6 @@ pub fn refresh_marker_cache(value: bool) {
 #[cfg(test)]
 pub(crate) fn reset_marker_cache_for_test() {
     *MARKER_CACHE.write().expect("MARKER_CACHE poisoned") = None;
-}
-
-/// Expand a leading bare `~` or `~/` to the home directory. Returns the path
-/// unchanged if home cannot be resolved or the input has no leading tilde.
-///
-/// `~user/` (other-user home) is **not** supported — this is a config field,
-/// not a shell input, so the surface is intentionally narrow.
-///
-/// Shared by `extensions/skills.rs` (skills paths from `[paths] extra_skill_dirs`)
-/// and `inspect.rs` (rules paths from `[paths] extra_rule_dirs`) so both call
-/// sites apply identical normalisation.
-pub fn expand_home(s: &str) -> std::path::PathBuf {
-    if let Some(stripped) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
-    } else if s == "~"
-        && let Some(home) = dirs::home_dir()
-    {
-        return home;
-    }
-    std::path::PathBuf::from(s)
 }
 
 /// Like [`is_claude_import_marked`], but logs a one-time `info!` line on the
@@ -1680,7 +1655,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn discover_hook_source_paths_includes_claude_when_marker_unset() {
+    fn discover_hook_source_paths_never_includes_claude() {
         let _g = MarkerGuard;
         refresh_marker_cache(false);
         let dir = tempfile::tempdir().unwrap();
@@ -1692,15 +1667,15 @@ mod tests {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         assert!(
-            project_strs.iter().any(|s| s.contains(".claude")),
-            "project sources should include .claude/ when marker unset; got {:?}",
+            !project_strs.iter().any(|s| s.contains(".claude")),
+            "project sources must never include .claude/ in this build; got {:?}",
             project_strs
         );
     }
 
     #[test]
     #[serial]
-    fn discover_hook_source_paths_includes_cursor_hooks_json() {
+    fn discover_hook_source_paths_never_includes_cursor_hooks_json() {
         let _g = MarkerGuard;
         refresh_marker_cache(false);
         let dir = tempfile::tempdir().unwrap();
@@ -1712,10 +1687,10 @@ mod tests {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         assert!(
-            global_strs
+            !global_strs
                 .iter()
                 .any(|s| s.contains(".cursor") && s.ends_with("hooks.json")),
-            "global sources should include ~/.cursor/hooks.json; got {:?}",
+            "global sources must never include ~/.cursor/hooks.json; got {:?}",
             global_strs
         );
         let project_strs: Vec<String> = paths
@@ -1724,10 +1699,10 @@ mod tests {
             .map(|p| p.to_string_lossy().to_string())
             .collect();
         assert!(
-            project_strs
+            !project_strs
                 .iter()
                 .any(|s| s.contains(".cursor") && s.ends_with("hooks.json")),
-            "project sources should include .cursor/hooks.json; got {:?}",
+            "project sources must never include .cursor/hooks.json; got {:?}",
             project_strs
         );
     }
@@ -1831,11 +1806,11 @@ mod tests {
 
     #[test]
     #[serial]
-    fn discover_hooks_honors_claude_compat_gate() {
-        // Pins the single load entry point every startup/reload site uses: with
-        // `compat.claude.hooks = false` a project `.claude/settings.json` hook must
-        // NOT load, and with it true it MUST. A pager e2e is disproportionate — the
-        // spawn/agent_ops wiring just forwards the resolved compat into this entry point.
+    fn discover_hooks_claude_compat_cannot_enable_vendor_hooks() {
+        // Pins the single load entry point every startup/reload site uses:
+        // Claude hook sources are compile-time disabled, so a project
+        // `.claude/settings.json` hook must NOT load even when
+        // `compat.claude.hooks = true`.
         let _g = MarkerGuard;
         // Marker unset so the Phase-2 import cutoff doesn't independently skip
         // `.claude` — isolates the compat gate.
@@ -1876,8 +1851,8 @@ mod tests {
         compat.claude.hooks = true;
         let (reg, _errs) = crate::util::hooks::discover_hooks(Some(git_root.path()), &compat, true);
         assert!(
-            has_probe(&reg),
-            "compat.claude.hooks=true: project .claude hook must be loaded"
+            !has_probe(&reg),
+            "compat.claude.hooks=true must still not load .claude hooks in this build"
         );
     }
 
@@ -2093,43 +2068,6 @@ extra_rule_dirs = ["/c/rules"]
     }
 
     #[test]
-    fn expand_home_passthrough_for_absolute_path() {
-        assert_eq!(
-            expand_home("/abs/path"),
-            std::path::PathBuf::from("/abs/path")
-        );
-    }
-
-    #[test]
-    fn expand_home_passthrough_for_relative_path() {
-        assert_eq!(
-            expand_home("rel/path"),
-            std::path::PathBuf::from("rel/path")
-        );
-    }
-
-    #[test]
-    fn expand_home_bare_tilde() {
-        let home = dirs::home_dir().expect("home_dir required for this test");
-        assert_eq!(expand_home("~"), home);
-    }
-
-    #[test]
-    fn expand_home_tilde_slash() {
-        let home = dirs::home_dir().expect("home_dir required for this test");
-        assert_eq!(expand_home("~/foo/bar"), home.join("foo/bar"));
-    }
-
-    #[test]
-    fn expand_home_does_not_handle_user_tilde() {
-        // Documented limitation: `~bob/path` is treated as a literal relative path.
-        assert_eq!(
-            expand_home("~bob/path"),
-            std::path::PathBuf::from("~bob/path")
-        );
-    }
-
-    #[test]
     fn scan_claude_path_dirs_dedupes_global_and_project_when_same() {
         // Simulate a workspace where project_root canonicalises to the home dir
         // (i.e. user runs /import-claude from ~ where .claude/ already lives).
@@ -2205,6 +2143,7 @@ extra_rule_dirs = ["/c/rules"]
         let resolved =
             xai_grok_workspace::permission::resolution::resolve_permissions_with_provenance(
                 dir.path(),
+                true,
             )
             .await;
         if let Some(r) = resolved {

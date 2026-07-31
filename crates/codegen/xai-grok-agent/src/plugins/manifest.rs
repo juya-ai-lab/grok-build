@@ -368,8 +368,8 @@ pub fn name_from_dirname(dir: &Path) -> Option<String> {
 
 /// Perform plugin-token substitution in a string.
 ///
-/// Replaces `${GROK_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_ROOT}`,
-/// `${GROK_PLUGIN_DATA}`, and `${CLAUDE_PLUGIN_DATA}` with the provided values.
+/// Replaces `${GROK_PLUGIN_ROOT}` and `${GROK_PLUGIN_DATA}` with the provided
+/// values. Vendor-prefixed tokens (`CLAUDE_*` / `CODEX_*`) stay literal.
 ///
 /// Delegates to [`xai_grok_tools::util::substitute_plugin_tokens`], the single
 /// source of truth shared with plugin skill/command body substitution.

@@ -20,7 +20,7 @@ pub struct HookMatcher {
 enum MatcherKind {
     All,
     /// Matches no tool names. Used when a configured matcher fails to compile
-    /// after deserialization — fail closed rather than widen to match-all.
+    /// after deserialization; fail closed rather than widen to match-all.
     Never,
     Exact(Vec<String>),
     Regex(Regex),
@@ -55,6 +55,15 @@ impl HookMatcher {
             MatcherKind::Exact(names) => names.iter().any(|n| n == tool_name),
             MatcherKind::Regex(regex) => regex.is_match(tool_name),
         }
+    }
+}
+
+/// Shared matcher-application rule: a missing matcher or missing value fires
+/// (fail-open); otherwise the compiled matcher decides.
+pub fn matcher_allows(matcher: Option<&HookMatcher>, value: Option<&str>) -> bool {
+    match (matcher, value) {
+        (Some(matcher), Some(value)) => matcher.is_match(value),
+        _ => true,
     }
 }
 
@@ -162,8 +171,6 @@ mod tests {
         assert!(!m.is_match("read_file"));
         assert!(!m.is_match("run_terminal_command"));
     }
-
-    // ── External tool-name aliases ────────────────────────────────
 
     #[test]
     fn claude_bash_does_not_match_grok_tool() {

@@ -437,14 +437,9 @@ fn all_subagents_with_plugins_and_home(
                     {
                         continue;
                     }
-                    // Use frontmatter-only parsing for untrusted plugins
-                    let def = if plugin.trusted {
-                        AgentDefinition::from_file(&path).ok()
-                    } else {
-                        AgentDefinition::from_file_frontmatter_only(&path).ok()
+                    let Some(def) = load_plugin_agent_definition(plugin, &path) else {
+                        continue;
                     };
-                    let Some(mut def) = def else { continue };
-                    def.plugin_name = Some(plugin.name.clone());
 
                     let qualified_name = format!("{}:{}", plugin.name, def.name);
 
@@ -533,17 +528,12 @@ fn by_name_in_cwd_with_plugins_and_home(
         {
             for agent_dir in &plugin.agent_dirs {
                 let agent_file = agent_dir.join(format!("{agent_name}.md"));
-                if is_allowed_agent_path(&agent_file) && agent_file.is_file() {
-                    let load_fn = if plugin.trusted {
-                        AgentDefinition::from_file
-                    } else {
-                        AgentDefinition::from_file_frontmatter_only
-                    };
-                    if let Ok(mut def) = load_fn(&agent_file) {
-                        def.plugin_name = Some(plugin_name.to_string());
-                        substitute_plugin_vars(&mut def, plugin);
-                        return Some(def);
-                    }
+                if is_allowed_agent_path(&agent_file)
+                    && agent_file.is_file()
+                    && let Some(mut def) = load_plugin_agent_definition(plugin, &agent_file)
+                {
+                    substitute_plugin_vars(&mut def, plugin);
+                    return Some(def);
                 }
             }
         }
@@ -562,13 +552,7 @@ fn by_name_in_cwd_with_plugins_and_home(
         }
         if matches.len() == 1 {
             let (plugin, agent_file) = &matches[0];
-            let load_fn = if plugin.trusted {
-                AgentDefinition::from_file
-            } else {
-                AgentDefinition::from_file_frontmatter_only
-            };
-            if let Ok(mut def) = load_fn(agent_file) {
-                def.plugin_name = Some(plugin.name.clone());
+            if let Some(mut def) = load_plugin_agent_definition(plugin, agent_file) {
                 substitute_plugin_vars(&mut def, plugin);
                 return Some(def);
             }
@@ -585,9 +569,41 @@ fn by_name_in_cwd_with_plugins_and_home(
     None
 }
 
-/// Expand `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}` (and the Grok
-/// aliases) in a plugin agent's body so the model receives absolute paths,
-/// matching the expected load-time resolution for these variables.
+/// Load one plugin-provided agent file, tagged with its owning plugin.
+///
+/// Untrusted plugins are parsed frontmatter-only so their prompt body never
+/// reaches the model before the plugin is trusted. A parse failure drops the
+/// agent from discovery entirely, so it is logged rather than swallowed.
+fn load_plugin_agent_definition(
+    plugin: &crate::plugins::LoadedPlugin,
+    path: &Path,
+) -> Option<AgentDefinition> {
+    let loaded = if plugin.trusted {
+        AgentDefinition::from_file(path)
+    } else {
+        AgentDefinition::from_file_frontmatter_only(path)
+    };
+    match loaded {
+        Ok(mut def) => {
+            def.plugin_name = Some(plugin.name.clone());
+            Some(def)
+        }
+        Err(e) => {
+            tracing::warn!(
+                plugin = %plugin.name,
+                path = %path.display(),
+                error = %e,
+                "Failed to parse plugin agent definition, skipping"
+            );
+            None
+        }
+    }
+}
+
+/// Expand `${GROK_PLUGIN_ROOT}` / `${GROK_PLUGIN_DATA}` in a plugin agent's
+/// body so the model receives absolute paths, matching the expected load-time
+/// resolution for these variables. Vendor-prefixed tokens
+/// (`CLAUDE_*` / `CODEX_*`) are left literal and never expanded.
 fn substitute_plugin_vars(def: &mut AgentDefinition, plugin: &crate::plugins::LoadedPlugin) {
     // Untrusted plugins are loaded frontmatter-only (body is None), and most
     // agents use a built-in system prompt. Skip computing root/data paths when
@@ -1527,6 +1543,44 @@ mod tests {
     }
 
     #[test]
+    fn plugin_agent_with_unrecognized_color_is_still_discovered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("workspace");
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&home).unwrap();
+
+        let plugin_root = tempfile::tempdir().unwrap();
+        let plugin_agents = plugin_root.path().join("agents");
+        fs::create_dir_all(&plugin_agents).unwrap();
+        fs::write(
+            plugin_agents.join("painter.md"),
+            "---\nname: painter\ndescription: Plugin painter\ncolor: chartreuse\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let registry = make_plugin_registry("plugin-one", PluginScope::User, vec![plugin_agents]);
+        let entries = all_subagents_with_plugins_and_home(
+            &cwd,
+            &HashMap::new(),
+            Some(&registry),
+            Some(&home),
+            Some(&home.join(".grok")),
+        );
+        assert!(entries.iter().any(|e| e.name == "plugin-one:painter"));
+
+        let def = by_name_in_cwd_with_plugins_and_home(
+            "plugin-one:painter",
+            &cwd,
+            Some(&registry),
+            Some(&home),
+            Some(&home.join(".grok")),
+        )
+        .expect("agent must resolve despite the unrecognized color");
+        assert_eq!(def.color, None, "unrecognized color must be dropped");
+    }
+
+    #[test]
     fn test_by_name_in_cwd_with_plugins_prefers_native_over_plugin_bare_name() {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path().join("workspace");
@@ -1567,9 +1621,9 @@ mod tests {
         let plugin_dir = tempfile::tempdir().unwrap();
         let plugin_agents = plugin_dir.path().join("agents");
         fs::create_dir_all(&plugin_agents).unwrap();
-        // Mirrors how enterprise plugin-dev agents reference the plugin root.
+        // Mirrors how plugin-dev agents reference the plugin root.
         let content = "---\nname: runner\ndescription: Runs a tool\n---\n\
-            Run python3 \"${CLAUDE_PLUGIN_ROOT}/tools/x.py\"\n";
+            Run python3 \"${GROK_PLUGIN_ROOT}/tools/x.py\"\n";
         fs::write(plugin_agents.join("runner.md"), content).unwrap();
 
         let registry = make_plugin_registry("plugin-one", PluginScope::User, vec![plugin_agents]);
@@ -1591,7 +1645,7 @@ mod tests {
             "expected resolved root in: {bare_body}"
         );
         assert!(
-            !bare_body.contains("${CLAUDE_PLUGIN_ROOT}"),
+            !bare_body.contains("${GROK_PLUGIN_ROOT}"),
             "literal token must be gone: {bare_body}"
         );
 
@@ -1609,7 +1663,7 @@ mod tests {
             qualified_body.contains(&resolved),
             "expected resolved root in: {qualified_body}"
         );
-        assert!(!qualified_body.contains("${CLAUDE_PLUGIN_ROOT}"));
+        assert!(!qualified_body.contains("${GROK_PLUGIN_ROOT}"));
     }
 
     #[test]
@@ -1620,9 +1674,8 @@ mod tests {
         let plugin = registry.get("plugin-one").unwrap();
 
         let mut def = AgentDefinition::default_grok_build();
-        def.prompt_body = Some("Body ${CLAUDE_PLUGIN_ROOT}/x".to_string());
-        def.system_prompt =
-            TemplateOverride::Custom("Data at ${CLAUDE_PLUGIN_DATA}/db".to_string());
+        def.prompt_body = Some("Body ${GROK_PLUGIN_ROOT}/x".to_string());
+        def.system_prompt = TemplateOverride::Custom("Data at ${GROK_PLUGIN_DATA}/db".to_string());
 
         substitute_plugin_vars(&mut def, plugin);
 
@@ -1632,7 +1685,7 @@ mod tests {
         match &def.system_prompt {
             TemplateOverride::Custom(tpl) => {
                 assert_eq!(tpl, &expected_prompt);
-                assert!(!tpl.contains("${CLAUDE_PLUGIN_DATA}"));
+                assert!(!tpl.contains("${GROK_PLUGIN_DATA}"));
             }
             other => panic!("expected Custom system_prompt, got {other:?}"),
         }

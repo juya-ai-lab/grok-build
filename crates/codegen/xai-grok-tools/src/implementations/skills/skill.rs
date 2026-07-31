@@ -474,6 +474,18 @@ pub fn extract_skill_body(content: &str) -> String {
 /// `load_skill_content` in `grok_build/skill/mod.rs` is a duplicate
 /// of this.
 pub async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
+    // Producers strip frontmatter before setting `body`. Re-strip would drop a
+    // leading Markdown HR (`---`) and skip link resolution for disk skills.
+    if let Some(body) = skill.body.as_ref().filter(|b| !b.is_empty()) {
+        return Ok(body.clone());
+    }
+    // Synthetic product paths are never on disk; empty body is authoritative.
+    if skill.path.contains("://") {
+        return Err(format!(
+            "Skill '{}' has no preloaded body (path '{}')",
+            skill.name, skill.path
+        ));
+    }
     let path = xai_grok_config::validate_skill_path(std::path::Path::new(&skill.path)).ok_or_else(
         || {
             format!(
@@ -549,6 +561,75 @@ It has multiple lines."#;
         let content = "Just some content without frontmatter";
         let body = extract_skill_body(content);
         assert_eq!(body, content);
+    }
+
+    #[tokio::test]
+    async fn load_skill_content_trusts_preloaded_body_with_leading_hr() {
+        let skill = SkillInfo {
+            name: "hr-body".to_string(),
+            display_name: None,
+            description: "test".to_string(),
+            short_description: None,
+            author: None,
+            argument_hint: None,
+            path: "chat-product://hr-body".to_string(),
+            scope: SkillScope::User,
+            config_source: None,
+            plugin_name: None,
+            plugin_version: None,
+            plugin_root: None,
+            plugin_data: None,
+            allowed_tools: None,
+            license: None,
+            compatibility: None,
+            metadata: None,
+            model: None,
+            effort: None,
+            user_invocable: true,
+            disable_model_invocation: false,
+            when_to_use: None,
+            has_user_specified_description: true,
+            paths: None,
+            enabled: true,
+            body: Some("---\n\nParagraph after a markdown HR.".to_string()),
+        };
+        let loaded = load_skill_content(&skill).await.unwrap();
+        assert_eq!(loaded, "---\n\nParagraph after a markdown HR.");
+    }
+
+    #[tokio::test]
+    async fn load_skill_content_rejects_synthetic_path_without_body() {
+        let skill = SkillInfo {
+            name: "pdf".to_string(),
+            display_name: None,
+            description: "test".to_string(),
+            short_description: None,
+            author: None,
+            argument_hint: None,
+            path: "chat-product://pdf".to_string(),
+            scope: SkillScope::Server,
+            config_source: None,
+            plugin_name: None,
+            plugin_version: None,
+            plugin_root: None,
+            plugin_data: None,
+            allowed_tools: None,
+            license: None,
+            compatibility: None,
+            metadata: None,
+            model: None,
+            effort: None,
+            user_invocable: true,
+            disable_model_invocation: false,
+            when_to_use: None,
+            has_user_specified_description: true,
+            paths: None,
+            enabled: true,
+            body: None,
+        };
+        let err = load_skill_content(&skill).await.unwrap_err();
+        assert!(err.contains("no preloaded body"), "{err}");
+        assert!(err.contains("chat-product://pdf"), "{err}");
     }
 
     #[test]
@@ -1293,7 +1374,7 @@ Review code.
         use std::os::unix::fs::symlink;
 
         let tmp = tempfile::tempdir().unwrap();
-        let discovered_path = tmp.path().join("ordinary-skill/SKILL.md");
+        let discovered_path = tmp.path().join(".grok/skills/swapped/SKILL.md");
         std::fs::create_dir_all(discovered_path.parent().unwrap()).unwrap();
         std::fs::write(&discovered_path, "safe instructions").unwrap();
         let skill = SkillInfo {
@@ -1309,8 +1390,14 @@ Review code.
         symlink(&vendor_path, &discovered_path).unwrap();
 
         let content_error = load_skill_content(&skill).await.unwrap_err();
-        assert!(content_error.contains("vendor state"), "{content_error}");
+        assert!(
+            content_error.contains("outside supported skill roots"),
+            "{content_error}"
+        );
         let body_error = load_skill_with_body(&skill).await.unwrap_err();
-        assert!(body_error.contains("vendor state"), "{body_error}");
+        assert!(
+            body_error.contains("outside supported skill roots"),
+            "{body_error}"
+        );
     }
 }

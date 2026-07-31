@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_gate_supports_bundled_and_user_skill_locations() {
+    async fn async_gate_never_enables_foreign_sources_in_this_build() {
         let enabled = gated_sources_async_with(compat_all(), Path::new("/grok"), |path| {
             let path = path.to_string_lossy();
             std::future::ready(
@@ -614,15 +614,13 @@ mod tests {
         .await;
         assert_eq!(
             enabled,
-            EnabledForeignSessionSources {
-                cursor: true,
-                ..Default::default()
-            }
+            EnabledForeignSessionSources::default(),
+            "no foreign-session source may be enabled in this build"
         );
     }
 
     #[test]
-    fn launch_detection_schedules_once_only_for_pristine_welcome() {
+    fn launch_detection_stays_disabled_in_this_build() {
         let mut app = crate::app::app_view::tests::test_app();
         app.foreign_session_compat = EnabledForeignSessionSources {
             cursor: true,
@@ -631,26 +629,11 @@ mod tests {
         app.deferred_startup.prompt = Some("explicit startup".into());
         assert!(app.begin_foreign_resume_detection().is_none());
         app.deferred_startup.prompt = None;
-        let Some(Effect::CanonicalizeForeignResumeCwd {
-            requested_cwd,
-            launch_token,
-        }) = app.begin_foreign_resume_detection()
-        else {
-            panic!("expected canonicalization effect");
-        };
         assert!(
             app.begin_foreign_resume_detection().is_none(),
-            "one launch must schedule at most one detection"
+            "foreign resume detection is compile-time disabled in this build"
         );
-        app.active_view = crate::app::app_view::ActiveView::AgentDashboard;
-        app.reconcile_foreign_resume_launch();
-        app.active_view = crate::app::app_view::ActiveView::Welcome;
-        assert!(!app.accept_foreign_resume_canonical_cwd(
-            launch_token,
-            &requested_cwd,
-            dunce::canonicalize(&requested_cwd).ok(),
-        ));
-        assert!(app.foreign_resume_hint().is_none());
+        assert!(app.foreign_resume_launch.is_none());
     }
 
     #[test]
@@ -663,52 +646,6 @@ mod tests {
         };
         assert!(app.begin_foreign_resume_detection().is_none());
         assert!(app.foreign_resume_launch.is_none());
-    }
-
-    #[test]
-    fn scan_effect_defers_skill_gate_to_background_lane() {
-        let home = tempfile::tempdir().unwrap();
-        let coordinator = ForeignScanCoordinator::default();
-        let effect = scan_effect(
-            Path::new("/repo"),
-            compat_all(),
-            home.path(),
-            coordinator,
-            2,
-        )
-        .expect("compat-enabled sources schedule a background gate");
-        assert!(matches!(
-            effect,
-            Effect::ScanForeignSessions {
-                compat: EnabledForeignSessionSources { cursor: true, .. },
-                seq: 2,
-                ..
-            }
-        ));
-        assert!(
-            scan_effect(
-                Path::new("/repo"),
-                EnabledForeignSessionSources::default(),
-                home.path(),
-                ForeignScanCoordinator::default(),
-                3,
-            )
-            .is_none()
-        );
-        assert!(
-            scan_effect(
-                Path::new("/repo"),
-                EnabledForeignSessionSources {
-                    claude: true,
-                    codex: true,
-                    cursor: false,
-                },
-                home.path(),
-                ForeignScanCoordinator::default(),
-                4,
-            )
-            .is_none()
-        );
     }
 
     #[tokio::test]
@@ -840,22 +777,5 @@ mod tests {
         let entries = entries.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, "native");
-    }
-
-    #[test]
-    fn equal_recency_keeps_native_first_and_orders_foreign_deterministically() {
-        let mut entries = Some(vec![picker_entry("native", "local", 1)]);
-
-        replace_foreign_entries(
-            &mut entries,
-            vec![
-                picker_entry("z", "cursor", 1),
-                picker_entry("b", "claude", 1),
-                picker_entry("a", "cursor", 1),
-            ],
-        );
-
-        let ids: Vec<_> = entries.unwrap().into_iter().map(|entry| entry.id).collect();
-        assert_eq!(ids, ["native", "a", "z"]);
     }
 }

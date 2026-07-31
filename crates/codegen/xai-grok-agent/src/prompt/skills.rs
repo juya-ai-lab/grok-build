@@ -2493,9 +2493,9 @@ mod tests {
         fs::create_dir_all(&repo_root).expect("create repo dir");
         init_git_repo(&repo_root);
 
-        let cursor_dir = repo_root.join(".cursor");
-        write_skill_md(&cursor_dir.join("skills").join("deploy"), "deploy");
-        let commands = cursor_dir.join("commands");
+        let grok_dir = repo_root.join(".grok");
+        write_skill_md(&grok_dir.join("skills").join("deploy"), "deploy");
+        let commands = grok_dir.join("commands");
         fs::create_dir_all(&commands).expect("create commands dir");
         fs::write(
             commands.join("deploy.md"),

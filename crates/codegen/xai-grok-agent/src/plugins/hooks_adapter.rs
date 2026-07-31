@@ -1,17 +1,11 @@
-//! Plugin hooks adapter — pre-filter and source-entry builder.
-//!
-//! This module is a bridge between plugin hook JSON files and the shared
-//! `xai-grok-hooks` runtime.  It pre-filters unsupported events from plugin
-//! hook files before passing them to `parse_hook_file()`, and injects
-//! plugin-specific environment variables into the resulting `HookSpec` entries.
-//!
-//! This is NOT a second hooks engine — it feeds into the existing
-//! `xai-grok-hooks` crate's parser and runtime.
+//! Plugin hooks adapter: pre-filter plugin hook JSON, then feed it to
+//! `xai-grok-hooks`' parser and inject plugin env vars. Not a second engine.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use xai_grok_hooks::config::{HookSpec, parse_hook_file};
+use xai_grok_hooks::event::HookEventName;
 
 use super::manifest::substitute_env_vars;
 
@@ -128,8 +122,7 @@ fn expand_non_vendor_env(input: &str) -> String {
 /// 3. Parses via `parse_hook_file()`
 /// 4. Injects plugin-specific env vars into each resulting `HookSpec`
 ///
-/// Returns `(specs, warnings)` — specs are ready to merge into the
-/// `HookRegistry`, warnings are unsupported-handler or parse errors.
+/// Read, pre-filter, parse, and env-inject a plugin's hooks file.
 pub fn parse_plugin_hooks(
     hooks_path: &Path,
     plugin_name: &str,
@@ -168,11 +161,7 @@ pub fn parse_plugin_hooks(
     (specs, warnings)
 }
 
-/// Parse inline hooks from a manifest JSON value.
-///
-/// Same pipeline as [`parse_plugin_hooks()`] but skips the file I/O step.
-/// The `value` is expected to be the manifest's inline hooks object,
-/// structured as `{ "hooks": { "EventName": [...] } }`.
+/// Like [`parse_plugin_hooks`] for an inline manifest hooks value (no file I/O).
 pub fn parse_plugin_hooks_from_value(
     value: &serde_json::Value,
     plugin_name: &str,
@@ -252,8 +241,14 @@ fn process_hooks_content(
         for (k, v) in &plugin_env {
             spec.extra_env.insert(k.clone(), v.clone());
         }
+        spec.layer = xai_grok_hooks::config::HookProvenance::Plugin;
         // Prefix name with plugin namespace for identification
-        spec.name = format!("plugin/{}/{}", plugin_name, spec.name);
+        spec.name = format!(
+            "{}{}/{}",
+            xai_grok_hooks::config::PLUGIN_HOOK_PREFIX,
+            plugin_name,
+            spec.name
+        );
         // Substitute native plugin env vars in command paths at config-load
         // time, regardless of which spawn branch the runner takes.
         if let Some(command_source) = spec.command_raw.clone().or_else(|| {
@@ -275,21 +270,16 @@ fn process_hooks_content(
     (specs, warnings)
 }
 
-/// Pre-filter unsupported event names from a hooks JSON file.
-///
-/// Parses the JSON, removes event keys from the `"hooks"` object that are
-/// not in the supported set, and returns the filtered JSON string plus the
-/// list of removed event names.
-///
-/// This is critical because the hooks crate uses `HashMap<HookEventName, ...>`
-/// deserialization which causes a full parse failure on unknown event names.
+/// Drop `hooks` event keys the parser wouldn't accept, returning the filtered
+/// JSON and the removed names. Not needed for correctness (the parser is lenient)
+/// but surfaces the drops to the plugin author as warnings. A key is supported
+/// exactly when [`HookEventName::parse_key`] accepts it, so there is no allowlist
+/// to drift.
 fn prefilter_unsupported_events(json_content: &str) -> (String, Vec<String>) {
     let mut value: serde_json::Value = match serde_json::from_str(json_content) {
         Ok(v) => v,
-        Err(_) => {
-            // If JSON is invalid, return as-is and let parse_hook_file handle the error
-            return (json_content.to_string(), vec![]);
-        }
+        // Invalid JSON: let parse_hook_file report it.
+        Err(_) => return (json_content.to_string(), vec![]),
     };
 
     let mut skipped = Vec::new();
@@ -297,7 +287,7 @@ fn prefilter_unsupported_events(json_content: &str) -> (String, Vec<String>) {
     if let Some(hooks_obj) = value.get_mut("hooks").and_then(|v| v.as_object_mut()) {
         let keys_to_remove: Vec<String> = hooks_obj
             .keys()
-            .filter(|key| !SUPPORTED_EVENTS.contains(&key.as_str()))
+            .filter(|key| HookEventName::parse_key(key).is_none())
             .cloned()
             .collect();
 
@@ -519,6 +509,8 @@ mod tests {
 
     /// Grok plugin tokens are substituted at config-load time, while Claude
     /// Code tokens remain literal and receive no compatibility treatment.
+    /// Regression: plugin path placeholders must resolve at load time, else the
+    /// runner's pre-spawn env check refuses to run the hook.
     #[test]
     fn parse_plugin_hooks_substitutes_plugin_root_in_command() {
         let value = serde_json::json!({
@@ -551,12 +543,8 @@ mod tests {
         assert!(commands.contains(&"/opt/plugins/gb1183/hooks/alias.sh".to_string()));
         assert!(commands.contains(&"${CLAUDE_PLUGIN_DATA}/cache/post.sh".to_string()));
 
-        // The plugin adapter must NOT mutate
-        // `command_raw`. The pager UI / ACP DTO surface the raw form
-        // for display so users see what they wrote (and so any secrets
-        // resolved from `extra_env` don't leak). A future "tidy" pass
-        // that mistakenly rewrote `command_raw` would silently break
-        // the secrets-leakage protection.
+        // `command_raw` must stay unmodified: it's the display form and rewriting
+        // it would leak `extra_env`-resolved secrets.
         let raws: Vec<&str> = specs
             .iter()
             .map(|s| s.command_raw.as_deref().unwrap_or(""))
@@ -583,22 +571,8 @@ mod tests {
         assert!(warnings.is_empty());
     }
 
-    /// Regression: plugin hook commands that reference generic env vars
-    /// (e.g. `${HOME}` / `$HOME`) must be expanded at config-load time
-    /// just like managed MCP server commands. Otherwise resolution
-    /// depends on the runtime `sh -c` heuristic in
-    /// `xai-grok-hooks::runner::command`, which can fail for hooks
-    /// whose handler doesn't otherwise contain shell metacharacters.
-    /// Plugin hooks must not be double-expanded: a `${GROK_PLUGIN_ROOT}`
-    /// reference resolves to the plugin root exactly once, and the result
-    /// contains no leftover `$` placeholders. This is the contract the
-    /// hooks_adapter has long held, and it must continue to hold
-    /// now that `parse_hook_file` itself does an env-expansion pass with
-    /// the per-hook `extra_env`. The first pass (in `parse_hook_file`)
-    /// runs against an EMPTY `extra_env` for plugin hooks (the adapter
-    /// only fills it in afterwards), so the placeholder survives that
-    /// pass and the second pass (here, after `extra_env` is wired in)
-    /// resolves it.
+    /// Regression: generic env vars (`${HOME}`) resolve at load time, and plugin
+    /// placeholders resolve exactly once (no leftover `$`, no double-expansion).
     #[test]
     fn parse_plugin_hooks_resolves_plugin_root_exactly_once() {
         let value = serde_json::json!({
@@ -739,10 +713,7 @@ mod tests {
 
     #[test]
     fn parse_plugin_hooks_expands_generic_env_vars_in_command() {
-        // SAFETY: only mutated within this single-threaded test.
-        // SAFETY: this test sets process env vars; tokio test macros
-        // serialize tests within the same module by default but to be
-        // robust use a uniquely-named var.
+        // Uniquely-named var so concurrent tests don't collide.
         let var = "GB1183_HOOKS_ADAPTER_TEST_HOME";
         // SAFETY: env writes are not thread-safe; this test is single-threaded.
         unsafe {

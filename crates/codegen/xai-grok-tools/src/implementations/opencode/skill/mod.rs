@@ -235,7 +235,7 @@ impl xai_tool_runtime::Tool for SkillTool {
     ) -> xai_tool_types::ToolDescription {
         xai_tool_types::ToolDescription::new(
             "skill",
-            crate::types::tool_metadata::ToolMetadata::description_template(self),
+            crate::types::tool_metadata::ToolMetadata::sanitized_description_template(self),
         )
     }
 
@@ -681,7 +681,7 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let tmp = TempDir::new().unwrap();
-        let discovered_path = tmp.path().join("ordinary-skill/SKILL.md");
+        let discovered_path = tmp.path().join(".grok/skills/swapped/SKILL.md");
         std::fs::create_dir_all(discovered_path.parent().unwrap()).unwrap();
         std::fs::write(&discovered_path, "safe instructions").unwrap();
         let skill = make_test_skill(
@@ -697,7 +697,7 @@ mod tests {
         symlink(&vendor_path, &discovered_path).unwrap();
 
         let error = load_skill_content(&skill).await.unwrap_err();
-        assert!(error.contains("vendor state"), "{error}");
+        assert!(error.contains("outside supported skill roots"), "{error}");
     }
 
     #[cfg(unix)]
@@ -706,7 +706,7 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let tmp = TempDir::new().unwrap();
-        let discovered_dir = tmp.path().join("ordinary-skill");
+        let discovered_dir = tmp.path().join(".grok/skills/swapped");
         let discovered_path = discovered_dir.join("SKILL.md");
         std::fs::create_dir_all(&discovered_dir).unwrap();
         std::fs::write(&discovered_path, "safe instructions").unwrap();
@@ -716,7 +716,7 @@ mod tests {
             discovered_path.to_str().unwrap(),
         );
 
-        let vendor_dir = tmp.path().join(".agents/skills/swapped");
+        let vendor_dir = tmp.path().join(".claude/skills/swapped");
         std::fs::create_dir_all(&vendor_dir).unwrap();
         std::fs::write(vendor_dir.join("SKILL.md"), "vendor instructions").unwrap();
         std::fs::write(vendor_dir.join("secret.txt"), "vendor attachment").unwrap();

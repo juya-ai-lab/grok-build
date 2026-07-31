@@ -475,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn find_rules_files_ignores_claude_rules_and_keeps_cursor_rules() {
+    fn find_rules_files_ignores_claude_and_cursor_rules() {
         let tmp = tempfile::tempdir().unwrap();
         let rules_dir = tmp.path().join(".claude").join("rules");
         fs::create_dir_all(&rules_dir).unwrap();
@@ -486,8 +486,10 @@ mod tests {
         fs::write(cursor_rules_dir.join("cursor.md"), "# Cursor rules").unwrap();
 
         let files = find_rules_files(tmp.path(), &CompatConfig::default().rules_dirs());
-        assert_eq!(files.len(), 1);
-        assert!(files[0].to_string_lossy().contains("cursor.md"));
+        assert!(
+            files.is_empty(),
+            "vendor rules files must be ignored, got: {files:?}"
+        );
     }
 
     // ── format_agents_md_section tests ──────────────────────────────

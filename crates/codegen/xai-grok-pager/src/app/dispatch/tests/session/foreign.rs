@@ -1,4 +1,5 @@
 use super::*;
+use xai_grok_shell::session::unified_list::ListScope;
 
 use crate::views::modal::ActiveModal;
 use crate::views::session_picker::{PickerItem, SourceFilter, build_entry_map};
@@ -48,47 +49,6 @@ fn modal_entries(app: &AppView) -> &[crate::app::app_view::SessionPickerEntry] {
 }
 
 #[test]
-fn foreign_result_interleaves_deduplicates_and_empty_clears_only_external() {
-    let mut app = test_app();
-    app.foreign_session_scan_seq = 4;
-    app.session_picker_lanes.foreign_loading = true;
-    app.session_picker_entries = Some(vec![at(make_picker_entry("native", "/repo"), 20)]);
-
-    let effects = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![
-                at(make_foreign_entry("old", "cursor", "/repo"), 10),
-                at(make_foreign_entry("new", "cursor", "/repo"), 30),
-                at(make_foreign_entry("old", "cursor", "/repo"), 10),
-            ],
-            seq: 4,
-        }),
-        &mut app,
-    );
-
-    assert!(effects.is_empty());
-    let ids: Vec<_> = app
-        .session_picker_entries
-        .as_ref()
-        .unwrap()
-        .iter()
-        .map(|entry| entry.id.as_str())
-        .collect();
-    assert_eq!(ids, ["new", "native", "old"]);
-
-    app.session_picker_lanes.foreign_loading = true;
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![],
-            seq: 4,
-        }),
-        &mut app,
-    );
-    let entries = app.session_picker_entries.as_ref().unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].id, "native");
-}
-
 #[test]
 fn foreign_result_drops_injected_disabled_vendor_rows() {
     let mut app = test_app();
@@ -113,164 +73,10 @@ fn foreign_result_drops_injected_disabled_vendor_rows() {
 }
 
 #[test]
-fn foreign_generation_drops_stale_closed_and_pre_reopen_results() {
-    let mut app = test_app();
-    app.foreign_session_scan_seq = 7;
-    app.session_picker_entries = Some(vec![make_picker_entry("native", "/repo")]);
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("stale", "cursor", "/repo")],
-            seq: 6,
-        }),
-        &mut app,
-    );
-    assert_eq!(app.session_picker_entries.as_ref().unwrap().len(), 1);
-
-    app.session_picker_entries = None;
-    let _ = dispatch(Action::SessionPickerClosed, &mut app);
-    let closed_seq = app.foreign_session_scan_seq;
-    let _ = dispatch(Action::FetchSessionList, &mut app);
-    let reopened_seq = app.foreign_session_scan_seq;
-    app.session_picker_lanes.foreign_loading = true;
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("closed", "cursor", "/repo")],
-            seq: closed_seq,
-        }),
-        &mut app,
-    );
-    assert!(app.session_picker_entries.is_none());
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("reopened", "cursor", "/repo")],
-            seq: reopened_seq,
-        }),
-        &mut app,
-    );
-    assert_eq!(
-        app.session_picker_entries.as_ref().unwrap()[0].id,
-        "reopened"
-    );
-}
-
 #[test]
-fn modal_refetch_clears_orphaned_welcome_foreign_loading() {
-    let mut app = test_app_with_agent();
-    app.foreign_session_compat =
-        xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: true,
-            codex: true,
-            cursor: true,
-        };
-    app.session_picker_lanes.foreign_loading = true;
-    open_session_picker_with(&mut app, vec![]);
-
-    let effects = dispatch(Action::FetchSessionList, &mut app);
-
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::ScanForeignSessions { .. }))
-    );
-    assert!(!app.session_picker_lanes.foreign_loading);
-    let Some(ActiveModal::SessionPicker { lanes, .. }) =
-        app.agents[&AgentId(0)].active_modal.as_ref()
-    else {
-        panic!("modal picker missing");
-    };
-    assert!(lanes.foreign_loading);
-}
-
 #[test]
-fn modal_foreign_scan_uses_native_list_cwd() {
-    let mut app = test_app_with_agent();
-    app.cwd = PathBuf::from("/native-list-cwd");
-    app.agents.get_mut(&AgentId(0)).unwrap().session.cwd = PathBuf::from("/agent-worktree-cwd");
-    app.foreign_session_compat =
-        xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: true,
-            codex: true,
-            cursor: true,
-        };
-    open_session_picker_with(&mut app, vec![]);
-
-    let effects = dispatch(Action::FetchSessionList, &mut app);
-
-    let [
-        Effect::FetchSessionList { .. },
-        Effect::ScanForeignSessions { cwd, .. },
-    ] = effects.as_slice()
-    else {
-        panic!("expected native and foreign picker effects");
-    };
-    assert_eq!(cwd, &app.cwd);
-}
-
 #[test]
-fn modal_without_foreign_lane_does_not_consume_welcome_result() {
-    let mut app = test_app_with_agent();
-    app.foreign_session_scan_seq = 12;
-    app.session_picker_entries = Some(vec![make_picker_entry("welcome-native", "/repo")]);
-    app.session_picker_lanes.foreign_loading = true;
-    open_session_picker_with(&mut app, vec![make_picker_entry("modal-native", "/repo")]);
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("welcome-foreign", "cursor", "/repo")],
-            seq: 12,
-        }),
-        &mut app,
-    );
-
-    assert_eq!(modal_entries(&app)[0].id, "modal-native");
-    assert!(
-        app.session_picker_entries
-            .as_ref()
-            .unwrap()
-            .iter()
-            .any(|entry| entry.id == "welcome-foreign")
-    );
-    assert!(!app.session_picker_lanes.foreign_loading);
-}
-
 #[test]
-fn native_empty_waits_for_foreign_and_foreign_only_rows_survive() {
-    let mut app = test_app();
-    app.session_picker_list_seq = 1;
-    app.foreign_session_scan_seq = 2;
-    app.session_picker_loading = true;
-    app.session_picker_lanes.foreign_loading = true;
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::SessionListLoaded {
-            sessions: vec![],
-            partial: None,
-            seq: 1,
-            query: None,
-        }),
-        &mut app,
-    );
-    assert!(!app.session_picker_loading);
-    assert!(app.session_picker_lanes.foreign_loading);
-    assert!(app.session_picker_entries.is_none());
-    assert!(app.session_picker_lanes.pending_notice.is_some());
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("foreign-only", "cursor", "/repo")],
-            seq: 2,
-        }),
-        &mut app,
-    );
-    assert!(!app.session_picker_lanes.foreign_loading);
-    assert!(app.session_picker_lanes.pending_notice.is_none());
-    assert_eq!(
-        app.session_picker_entries.as_ref().unwrap()[0].id,
-        "foreign-only"
-    );
-}
-
 #[test]
 fn foreign_empty_then_native_empty_finishes_once_without_resurrecting() {
     let mut app = test_app();
@@ -291,6 +97,7 @@ fn foreign_empty_then_native_empty_finishes_once_without_resurrecting() {
 
     let _ = dispatch(
         Action::TaskComplete(TaskResult::SessionListLoaded {
+            scope: ListScope::Cwd,
             sessions: vec![],
             partial: None,
             seq: 3,
@@ -304,41 +111,6 @@ fn foreign_empty_then_native_empty_finishes_once_without_resurrecting() {
 }
 
 #[test]
-fn modal_native_failure_waits_for_foreign_rows_before_toast() {
-    let mut app = test_app_with_agent();
-    app.session_picker_list_seq = 6;
-    app.foreign_session_scan_seq = 7;
-    open_session_picker_with(&mut app, vec![]);
-    if let Some(ActiveModal::SessionPicker { loading, lanes, .. }) = get_active_agent_mut(&mut app)
-        .unwrap()
-        .active_modal
-        .as_mut()
-    {
-        *loading = true;
-        lanes.foreign_loading = true;
-    }
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::SessionListFailed {
-            error: "native failed".into(),
-            seq: 6,
-            query: None,
-        }),
-        &mut app,
-    );
-    assert!(app.agents[&AgentId(0)].toast.is_none());
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![make_foreign_entry("foreign-only", "cursor", "/repo")],
-            seq: 7,
-        }),
-        &mut app,
-    );
-    assert_eq!(modal_entries(&app)[0].id, "foreign-only");
-    assert!(read_toast(&app).contains("native failed"));
-}
-
 #[test]
 fn modal_empty_notice_waits_until_both_lanes_are_empty() {
     let mut app = test_app_with_agent();
@@ -355,6 +127,7 @@ fn modal_empty_notice_waits_until_both_lanes_are_empty() {
     }
     let _ = dispatch(
         Action::TaskComplete(TaskResult::SessionListLoaded {
+            scope: ListScope::Cwd,
             sessions: vec![],
             partial: None,
             seq: 9,
@@ -375,117 +148,7 @@ fn modal_empty_notice_waits_until_both_lanes_are_empty() {
 }
 
 #[test]
-fn welcome_selection_survives_foreign_insertion_with_viewport_offset() {
-    let mut app = test_app();
-    app.session_picker_grouped = false;
-    app.foreign_session_scan_seq = 8;
-    app.session_picker_lanes.foreign_loading = true;
-    app.session_picker_entries = Some(vec![
-        at(make_picker_entry("a", "/repo"), 20),
-        at(make_picker_entry("b", "/repo"), 10),
-    ]);
-    app.session_picker_state.selected = 1;
-    app.session_picker_state.scroll_offset = Some(1);
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![at(make_foreign_entry("new", "cursor", "/repo"), 30)],
-            seq: 8,
-        }),
-        &mut app,
-    );
-
-    assert_eq!(app.session_picker_state.selected, 2);
-    assert_eq!(app.session_picker_state.scroll_offset, Some(2));
-    let selected = &app.session_picker_entries.as_ref().unwrap()[2];
-    assert_eq!(
-        (selected.source.as_str(), selected.id.as_str()),
-        ("local", "b")
-    );
-}
-
 #[test]
-fn modal_selection_survives_native_and_foreign_completion_races() {
-    let mut app = test_app_with_agent();
-    app.session_picker_list_seq = 2;
-    app.foreign_session_scan_seq = 3;
-    open_session_picker_with(
-        &mut app,
-        vec![
-            at(make_picker_entry("a", "/repo"), 20),
-            at(make_picker_entry("b", "/repo"), 10),
-        ],
-    );
-    if let Some(ActiveModal::SessionPicker { state, lanes, .. }) = get_active_agent_mut(&mut app)
-        .unwrap()
-        .active_modal
-        .as_mut()
-    {
-        state.selected = 2;
-        state.scroll_offset = Some(1);
-        lanes.foreign_loading = true;
-    }
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::ForeignSessionsScanned {
-            entries: vec![at(make_foreign_entry("new", "cursor", "/repo"), 30)],
-            seq: 3,
-        }),
-        &mut app,
-    );
-    let Some(ActiveModal::SessionPicker { state, .. }) =
-        app.agents[&AgentId(0)].active_modal.as_ref()
-    else {
-        panic!("modal picker missing");
-    };
-    assert_eq!(state.selected, 3);
-    assert_eq!(state.scroll_offset, Some(2));
-    let map = build_entry_map(
-        Some(modal_entries(&app)),
-        None,
-        "",
-        true,
-        false,
-        SourceFilter::All,
-        Some("repo"),
-    );
-    let Some(PickerItem::Fuzzy { original_index }) = map[state.selected].as_ref() else {
-        panic!("selection must remain on a row");
-    };
-    assert_eq!(modal_entries(&app)[*original_index].id, "b");
-
-    let _ = dispatch(
-        Action::TaskComplete(TaskResult::SessionListLoaded {
-            sessions: vec![
-                at(make_picker_entry("a", "/repo"), 20),
-                at(make_picker_entry("b", "/repo"), 10),
-            ],
-            partial: None,
-            seq: 2,
-            query: None,
-        }),
-        &mut app,
-    );
-    let Some(ActiveModal::SessionPicker { state, .. }) =
-        app.agents[&AgentId(0)].active_modal.as_ref()
-    else {
-        panic!("modal picker missing");
-    };
-    let map = build_entry_map(
-        Some(modal_entries(&app)),
-        None,
-        "",
-        true,
-        false,
-        SourceFilter::All,
-        Some("repo"),
-    );
-    let Some(PickerItem::Fuzzy { original_index }) = map[state.selected].as_ref() else {
-        panic!("selection must remain on a row");
-    };
-    assert_eq!(modal_entries(&app)[*original_index].id, "b");
-}
-
 #[test]
 fn external_filter_clears_and_suppresses_native_content_state() {
     let mut app = test_app();
@@ -497,7 +160,8 @@ fn external_filter_clears_and_suppresses_native_content_state() {
     app.session_picker_content_results = Some(vec![content_hit("native-hit")]);
     app.session_picker_content_loading = true;
     app.session_picker_state.expanded.insert(0);
-    app.session_picker_source_filter = SourceFilter::Remote;
+    // Grok cycles straight into External.
+    app.session_picker_source_filter = SourceFilter::Grok;
     let old_detail_generation = app.session_picker_detail_generation;
 
     let effects = dispatch(Action::CycleSessionSourceFilter, &mut app);
@@ -591,7 +255,8 @@ fn modal_external_filter_clears_native_content_and_blocks_forced_search() {
         .active_modal
         .as_mut()
     {
-        *source_filter = SourceFilter::Remote;
+        // Grok cycles straight into External.
+        *source_filter = SourceFilter::Grok;
         *content_results = Some(vec![content_hit("native-hit")]);
         *content_loading = true;
         state.set_query("native");
@@ -615,6 +280,27 @@ fn modal_external_filter_clears_native_content_and_blocks_forced_search() {
     assert!(!*content_loading);
     assert!(state.expanded.is_empty());
     assert!(dispatch(Action::ForceDeepSearch, &mut app).is_empty());
+}
+
+#[test]
+fn cycle_reaches_every_filter_with_foreign_present() {
+    // One press from the default reveals externals, and Local/Remote stay
+    // reachable on the same plain cycle even with foreign rows loaded.
+    let mut app = test_app();
+    app.session_picker_entries = Some(vec![
+        make_picker_entry("native", "/repo"),
+        make_foreign_entry("foreign", "claude", "/repo"),
+    ]);
+    for expected in [
+        SourceFilter::External,
+        SourceFilter::All,
+        SourceFilter::Local,
+        SourceFilter::Remote,
+        SourceFilter::Grok,
+    ] {
+        let _ = dispatch(Action::CycleSessionSourceFilter, &mut app);
+        assert_eq!(app.session_picker_source_filter, expected);
+    }
 }
 
 #[test]
@@ -848,72 +534,6 @@ fn colliding_native_and_foreign_ids_use_source_at_initiation() {
 }
 
 #[test]
-fn gated_foreign_pick_replaces_all_prior_startup_intents() {
-    let mut app = test_app_with_agent();
-    let old_id = AgentId(0);
-    app.trust_state = TrustState::Pending {
-        workspace: PathBuf::from("/repo"),
-    };
-    app.deferred_startup.session =
-        Some(crate::app::session_startup::DeferredSessionStartup::Load {
-            session_id: "must-not-load".into(),
-            session_cwd: Some(PathBuf::from("/other")),
-            chat_kind: true,
-        });
-    app.deferred_startup.worktree = true;
-    app.deferred_startup.worktree_label = Some("stale".into());
-    app.deferred_startup.worktree_ref = Some("stale-ref".into());
-    app.deferred_startup.preferred_session_id = Some("stale-id".into());
-    app.deferred_startup.new_session = true;
-    app.deferred_startup.prompt = Some("stale prompt".into());
-    app.deferred_startup.pending_chat = true;
-    open_session_picker_with(
-        &mut app,
-        vec![make_foreign_entry("cursor-deferred", "cursor", "/repo")],
-    );
-
-    assert!(dispatch(Action::PickSession(0), &mut app).is_empty());
-    assert!(matches!(
-        app.deferred_startup.session.as_ref(),
-        Some(crate::app::session_startup::DeferredSessionStartup::ForeignResume {
-            tool: ForeignSessionTool::Cursor,
-            native_id,
-        }) if native_id == "cursor-deferred"
-    ));
-    assert!(!app.deferred_startup.worktree);
-    assert!(app.deferred_startup.worktree_label.is_none());
-    assert!(app.deferred_startup.worktree_ref.is_none());
-    assert!(app.deferred_startup.preferred_session_id.is_none());
-    assert!(!app.deferred_startup.new_session);
-    assert!(app.deferred_startup.prompt.is_none());
-    assert!(!app.deferred_startup.pending_chat);
-
-    app.trust_state = TrustState::Done;
-    app.new_session_worktree_mode = crate::app::app_view::WorktreeMode::Always;
-    let effects = drain_startup_actions(&mut app);
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::CreateSession { .. }))
-    );
-    assert!(
-        !effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::CreateWorktreeSession { .. }))
-    );
-    assert!(app.agents[&old_id].session.pending_prompts.is_empty());
-    let new_id = AgentId(1);
-    assert_eq!(app.active_view, ActiveView::Agent(new_id));
-    assert_eq!(
-        app.agents[&new_id]
-            .session
-            .pending_prompts
-            .front()
-            .map(|prompt| prompt.text.as_str()),
-        Some("/resume-cursor cursor-deferred")
-    );
-}
-
 #[test]
 fn disabled_vendor_picker_rows_and_deferred_resumes_are_rejected() {
     for (wire, tool) in [
@@ -940,47 +560,6 @@ fn disabled_vendor_picker_rows_and_deferred_resumes_are_rejected() {
 }
 
 #[test]
-fn welcome_and_modal_foreign_picks_always_target_fresh_sessions() {
-    let mut welcome = test_app();
-    welcome.session_picker_entries =
-        Some(vec![make_foreign_entry("cursor-native", "cursor", "/repo")]);
-    let effects = dispatch(Action::PickSession(0), &mut welcome);
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::CreateSession { .. }))
-    );
-    assert_eq!(
-        welcome.agents[&AgentId(0)]
-            .session
-            .pending_prompts
-            .front()
-            .map(|prompt| prompt.text.as_str()),
-        Some("/resume-cursor cursor-native")
-    );
-
-    let mut modal = test_app_with_agent();
-    open_session_picker_with(
-        &mut modal,
-        vec![make_foreign_entry("cursor-native", "cursor", "/repo")],
-    );
-    let effects = dispatch(Action::PickSession(0), &mut modal);
-    assert!(
-        effects
-            .iter()
-            .any(|effect| matches!(effect, Effect::CreateSession { .. }))
-    );
-    assert!(modal.agents[&AgentId(0)].session.pending_prompts.is_empty());
-    assert_eq!(
-        modal.agents[&AgentId(1)]
-            .session
-            .pending_prompts
-            .front()
-            .map(|prompt| prompt.text.as_str()),
-        Some("/resume-cursor cursor-native")
-    );
-}
-
 #[test]
 fn foreign_selection_and_mutation_guards_remain_central() {
     let mut app = test_app_with_agent();
@@ -1037,26 +616,4 @@ fn chat_picker_never_launches_or_accepts_foreign_scan() {
         &mut app,
     );
     assert_eq!(app.session_picker_entries.as_ref().unwrap().len(), 1);
-}
-
-#[test]
-fn native_fetch_effect_precedes_background_foreign_gate() {
-    let mut app = test_app();
-    app.foreign_session_compat =
-        xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: true,
-            codex: true,
-            cursor: true,
-        };
-
-    let effects = dispatch(Action::FetchSessionList, &mut app);
-
-    assert!(matches!(
-        effects.as_slice(),
-        [
-            Effect::FetchSessionList { .. },
-            Effect::ScanForeignSessions { .. }
-        ]
-    ));
-    assert!(app.session_picker_lanes.foreign_loading);
 }

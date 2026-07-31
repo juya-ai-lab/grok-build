@@ -501,7 +501,7 @@ mod tests {
         let root = tmp.path();
         let sub = root.join("sub");
         fs::create_dir_all(&sub).unwrap();
-        fs::write(sub.join("Claude.md"), "claude instructions").unwrap();
+        fs::write(sub.join("AGENT.md"), "agent instructions").unwrap();
 
         let mut tracker = AgentsMdTracker::new();
         tracker
@@ -510,7 +510,7 @@ mod tests {
 
         let results = tracker.check_path(&sub.join("foo.rs")).await;
         assert_eq!(results.len(), 1);
-        assert!(results[0].ends_with("Claude.md"));
+        assert!(results[0].ends_with("AGENT.md"));
     }
 
     #[tokio::test]
