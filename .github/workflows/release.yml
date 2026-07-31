@@ -117,6 +117,14 @@ jobs:
     runs-on: ${{ matrix.runner }}
     needs: prepare
     timeout-minutes: 120
+    env:
+      # Compile cache shared across release runs (sccache, GHA backend).
+      # Per-target keys avoid matrix-leg write races; the repo-wide GHA cache
+      # is 10 GB, so stale entries are evicted LRU.
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_GHA_CACHE_TO: sccache-${{ matrix.target }}
+      SCCACHE_GHA_CACHE_FROM: sccache-${{ matrix.target }}
     strategy:
       fail-fast: false
       matrix:
@@ -166,6 +174,9 @@ jobs:
         uses: ./.github/actions/setup-build
         with:
           targets: ${{ matrix.target }}
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
