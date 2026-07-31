@@ -2,7 +2,8 @@
 # to a GitHub Release when a version tag is pushed.
 #
 # Flow:
-#   build × 6 (parallel, fail-fast: false) → publish whatever succeeded
+#   prepare (resolve version, create tag if missing) → build × 6
+#   (parallel, fail-fast: false) → publish whatever succeeded
 #
 # A platform that finishes the full build/package/upload path is published
 # even if other matrix legs fail. Lint gates belong on PR CI, not here.
@@ -17,9 +18,9 @@
 #   1) git tag v0.2.116 && git push origin v0.2.116  (automatic)
 #   2) Actions tab -> Release -> Run workflow -> optionally enter a tag -> run
 #      (web-only path; no git client needed. Leave the tag empty to derive it
-#      from the version crate manifest (VERSION_CRATE_MANIFEST). The release
-#      API creates the tag at the built commit, and GITHUB_TOKEN-created refs
-#      do not re-trigger the push workflow.)
+#      from the version crate manifest (VERSION_CRATE_MANIFEST). The tag is
+#      created up front (when missing) at the built commit; GITHUB_TOKEN-
+#      created refs do not re-trigger the push workflow.)
 
 name: Release
 
@@ -55,9 +56,66 @@ env:
   CARGO_CACHE_SHARED_KEY: release-shared
 
 jobs:
+  prepare:
+    name: Resolve version and create tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ inputs.tag }}"
+            if [ -z "$tag" ]; then
+              version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$VERSION_CRATE_MANIFEST" | head -1)"
+              if [ -z "$version" ]; then
+                echo "Could not read version from $VERSION_CRATE_MANIFEST; enter a tag in the workflow inputs." >&2
+                exit 1
+              fi
+              tag="v${version}"
+              echo "Manual run: derived tag from version crate = $tag"
+            else
+              echo "Manual run: tag input = $tag"
+            fi
+          fi
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
+            echo "Invalid version tag: $tag (expected vX.Y.Z or vX.Y.Z-suffix)" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag if missing
+        shell: bash
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Tag-push run: tag ${TAG} already exists by definition."
+            exit 0
+          fi
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag ${TAG} already exists on origin; not re-creating it."
+            exit 0
+          fi
+          git tag "${TAG}"
+          git push origin "${TAG}"
+          echo "Created and pushed tag ${TAG} at $(git rev-parse HEAD)."
+
   build:
     name: build (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
+    needs: prepare
     timeout-minutes: 120
     strategy:
       fail-fast: false
@@ -104,37 +162,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Resolve version
-        id: ver
-        shell: bash
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            tag="${GITHUB_REF_NAME}"
-          else
-            tag="${{ inputs.tag }}"
-            if [ -z "$tag" ]; then
-              # Web-only convenience: derive the release tag from the crate
-              # version, so a new tag/release is created at the built commit.
-              version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' \
-                "$VERSION_CRATE_MANIFEST" | head -1)"
-              if [ -z "$version" ]; then
-                echo "Could not read version from $VERSION_CRATE_MANIFEST; enter a tag in the workflow inputs." >&2
-                exit 1
-              fi
-              tag="v${version}"
-              echo "Manual run: derived tag from version crate = $tag"
-            else
-              echo "Manual run: tag input = $tag"
-            fi
-          fi
-          version="${tag#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
-            echo "Invalid version tag: $tag (expected vX.Y.Z or vX.Y.Z-suffix)" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Resolved GROK_VERSION=$version"
-
       - name: Setup protoc + Rust
         uses: ./.github/actions/setup-build
         with:
@@ -152,7 +179,7 @@ jobs:
       - name: Build release-dist binary
         shell: bash
         env:
-          GROK_VERSION: ${{ steps.ver.outputs.version }}
+          GROK_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           df -h . || df -h || true
@@ -179,7 +206,7 @@ jobs:
         id: pkg
         shell: bash
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
           EXE_SUFFIX: ${{ matrix.exe_suffix }}
@@ -220,7 +247,7 @@ jobs:
         if: matrix.can_run
         shell: bash
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           bin="${{ steps.pkg.outputs.asset_path }}"
@@ -258,26 +285,19 @@ jobs:
 
   release:
     name: publish GitHub Release
-    needs: build
+    needs: [build, prepare]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Publish any successful platform artifacts even when other matrix legs fail.
     # Skip only if the whole run was cancelled or nothing reached upload.
     if: >-
       always()
+      && needs.prepare.result == 'success'
       && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
       && !cancelled()
       && needs.build.result != 'cancelled'
 
     steps:
-      - name: Resolve version from tag
-        id: ver
-        shell: bash
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#v}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
       - name: Download successful binaries
         uses: actions/download-artifact@v8
         with:
@@ -291,7 +311,7 @@ jobs:
         id: assets
         shell: bash
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p artifacts
@@ -338,10 +358,10 @@ jobs:
         if: steps.assets.outputs.has_assets == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.ver.outputs.version }}
-          name: v${{ steps.ver.outputs.version }}
-          # For manual runs the tag may not exist yet: create it at the built
-          # commit. Ignored when the tag already exists (tag-push runs).
+          tag_name: v${{ needs.prepare.outputs.version }}
+          name: v${{ needs.prepare.outputs.version }}
+          # Manual runs create the tag up front at the built commit; ignored
+          # when the tag already exists (tag-push runs).
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           # Re-running / partial matrices should attach newly built assets.
