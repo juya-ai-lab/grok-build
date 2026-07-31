@@ -9,6 +9,11 @@ use crate::app::app_view::AppView;
 /// marks dismissed. Otherwise stores modal state on AppView so welcome
 /// rendering shows the modal.
 pub(super) fn dispatch_import_claude(app: &mut AppView) -> Vec<Effect> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        app.has_claude_import = false;
+        app.import_claude_modal = None;
+        return vec![];
+    }
     let cwd = app.cwd.clone();
     let plan = xai_grok_shell::claude_import::scan_importable_settings(&cwd);
 
@@ -37,6 +42,11 @@ pub(super) fn dispatch_import_claude(app: &mut AppView) -> Vec<Effect> {
 
 /// Apply the user's selection from the import modal and close it.
 pub(super) fn dispatch_import_claude_confirm(app: &mut AppView) -> Vec<Effect> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        app.has_claude_import = false;
+        app.import_claude_modal = None;
+        return vec![];
+    }
     let Some(modal) = app.import_claude_modal.take() else {
         return vec![];
     };
@@ -102,6 +112,11 @@ pub(super) fn dispatch_import_claude_cancel(app: &mut AppView) -> Vec<Effect> {
 /// content hash. The startup detection compares the saved hash on next
 /// launch — if it matches (no new Claude content), the menu stays hidden.
 pub(super) fn dispatch_dismiss_claude_import(app: &mut AppView) -> Vec<Effect> {
+    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
+        app.has_claude_import = false;
+        app.import_claude_modal = None;
+        return vec![];
+    }
     let cwd = app.cwd.clone();
     // Record the current `.claude/` content hash so the welcome menu row
     // doesn't reappear next session unless the content actually changes.

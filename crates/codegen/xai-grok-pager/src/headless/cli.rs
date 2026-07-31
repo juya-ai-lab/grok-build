@@ -217,6 +217,9 @@ pub(crate) fn parse_cli_agents(
         serde_json::from_str(json).map_err(|e| anyhow::anyhow!("--agents: invalid JSON: {e}"))?;
     let mut agents = Vec::with_capacity(map.len());
     for (name, mut value) in map {
+        if xai_grok_agent::config::is_build_disabled_agent_name(&name) {
+            anyhow::bail!("--agents: agent name 'codex' is reserved and build-disabled");
+        }
         if let serde_json::Value::Object(ref mut obj) = value {
             if !obj.contains_key("promptBody")
                 && let Some(prompt) = obj.remove("prompt")

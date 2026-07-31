@@ -1494,20 +1494,6 @@ mod tests {
     }
 
     #[test]
-    fn foreign_entry_uses_source_badge_and_has_no_detail_expansion() {
-        let mut entry = make_entry("foreign", "repo");
-        entry.source = "codex".into();
-        let mut state = PickerState::default();
-        state.expanded.insert(0);
-
-        let built = build_session_entry_data(&[entry], &[0], &state, 80);
-
-        assert_eq!(built[0].badge, "codex");
-        assert!(!built[0].collapsible);
-        assert!(!built[0].is_expanded);
-        assert!(built[0].field_data.is_empty());
-    }
-
     #[test]
     fn source_filter_combined_with_text_query() {
         fn entry_with_source(id: &str, source: &str) -> SessionPickerEntry {

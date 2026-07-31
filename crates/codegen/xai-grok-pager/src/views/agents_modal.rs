@@ -479,7 +479,7 @@ pub fn merge_persona_lists(bundle: &BundleState, cwd: &Path) -> Vec<PersonaDetai
     for persona in &mut list {
         if persona.source_path.is_none() {
             let path = bundled_dir.join(format!("{}.toml", persona.name));
-            if path.exists() {
+            if xai_grok_config::validate_grok_path(&path).is_some() && path.exists() {
                 persona.source_path = Some(path.display().to_string());
                 if persona.scope_label.is_none() {
                     persona.scope_label = Some("bundled".to_string());
@@ -502,6 +502,9 @@ fn append_local_personas_in_dir(
     list: &mut Vec<PersonaDetail>,
     names: &mut std::collections::HashSet<String>,
 ) {
+    if xai_grok_config::validate_grok_path(dir).is_none() {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -509,7 +512,9 @@ fn append_local_personas_in_dir(
         .flatten()
         .filter_map(|entry| {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            if xai_grok_config::validate_grok_path(&path).is_none()
+                || path.extension().and_then(|e| e.to_str()) != Some("toml")
+            {
                 return None;
             }
             path.file_stem()?.to_str().map(str::to_owned)
@@ -532,6 +537,7 @@ fn persona_detail_from_local_file(
     name: &str,
     scope: ConfigFileScope,
 ) -> Option<PersonaDetail> {
+    xai_grok_config::validate_grok_path(path)?;
     let content = std::fs::read_to_string(path).ok()?;
     let table: toml::Value = toml::from_str(&content).ok()?;
     let desc = table

@@ -63,17 +63,17 @@ Hooks are discovered from several places (all are merged):
 | Scope | Path | Trusted? | Notes |
 |-------|------|----------|-------|
 | Global | `~/.grok/hooks/*.json` | Always | Personal hooks |
-| Global | `~/.claude/settings.json` (and `settings.local.json`) | Always | Claude Code compatibility (configurable) |
-| Global | `~/.cursor/hooks.json` | Always | Cursor compatibility (configurable) |
+| Global | `~/.claude/settings.json` (and `settings.local.json`) | — | Disabled in this build |
+| Global | `~/.cursor/hooks.json` | — | Disabled in this build |
 | Project | `<project>/.grok/hooks/*.json` | Requires trust | Per-repo automation |
-| Project | `<project>/.claude/settings.json` (and `settings.local.json`) | Requires trust | Claude compatibility (configurable) |
-| Project | `<project>/.cursor/hooks.json` | Requires trust | Cursor compatibility (configurable) |
+| Project | `<project>/.claude/settings.json` (and `settings.local.json`) | — | Disabled in this build |
+| Project | `<project>/.cursor/hooks.json` | — | Disabled in this build |
 | Config | `~/.grok/config.toml` | Always | Your hooks alongside the rest of your config |
 | Config | `managed_config.toml` (`$GROK_HOME` and `/etc/grok`) | Always | Organization-distributed hooks (server-synced and on-device) |
 | Config | `requirements.toml` (user and system) | Always | Organization-distributed hooks in the requirements layer |
 | Plugin | Bundled inside installed plugins | Per-plugin | Shared team hooks |
 
-Config-file hooks live in the same TOML your organization already controls; see [Hooks in Config Files](#hooks-in-config-files) for the format. The compatible vendor hook sources are scanned by default. To disable scanning for a specific vendor, set `[compat.<vendor>] hooks = false` in `~/.grok/config.toml` or the corresponding environment variable. See [Configuration](05-configuration.md#harness-compatibility) for details.
+Config-file hooks live in the same TOML your organization already controls; see [Hooks in Config Files](#hooks-in-config-files) for the format. Claude and Cursor hook sources are disabled at compile time. The raw `[compat.<vendor>]` keys remain schema-compatible but cannot enable scanning.
 
 **Trusting a project**: The first time you open a project with hooks, you must trust it before its project hooks will run -- until then they are silently skipped. Grant trust by running `/hooks-trust` (or launching with `--trust`); the decision is recorded in the unified folder-trust store (`~/.grok/trusted_folders.toml`), the same gate that governs repo-local MCP/LSP servers. Global hooks in `~/.grok/hooks/` are always trusted and need no entry. This prevents untrusted repos from running arbitrary code.
 
@@ -102,22 +102,8 @@ Because hooks are unified under folder-trust, a `--trust` / `/hooks-trust` grant
 
 `SubagentEnd` is accepted as an alias for `SubagentStop`. `PreToolUse` can block a tool call, and `Stop`/`SubagentStop` can block the agent from stopping (see [Stop Decision Control](#stop-decision-control)); every other event is passive.
 
-### Cursor Hook Compatibility
-
-Grok accepts Cursor's camelCase hook event names, so `~/.cursor/hooks.json` loads unchanged:
-
-| Cursor event | Maps to |
-|---|---|
-| `sessionStart`, `sessionEnd` | `SessionStart`, `SessionEnd` |
-| `preToolUse`, `postToolUse`, `postToolUseFailure` | `PreToolUse`, `PostToolUse`, `PostToolUseFailure` |
-| `beforeShellExecution`, `beforeMCPExecution`, `beforeReadFile` | `PreToolUse` |
-| `afterShellExecution`, `afterMCPExecution`, `afterFileEdit` | `PostToolUse` |
-| `afterAgentResponse`, `afterAgentThought` | `PostToolUse` |
-| `beforeSubmitPrompt` | `UserPromptSubmit` |
-| `subagentStart`, `subagentStop` | `SubagentStart`, `SubagentStop` |
-| `preCompact`, `stop` | `PreCompact`, `Stop` |
-
-Cursor's per-operation hooks (`beforeShellExecution`, `afterFileEdit`, etc.) map to the generic `PreToolUse`/`PostToolUse` events. The hook script receives the tool name in the JSON input and can filter accordingly, or use the `matcher` field.
+Cursor camelCase and per-operation hook event aliases are rejected in this
+build; use Grok's native PascalCase or snake_case event names in `.grok/hooks`.
 
 ---
 
@@ -149,25 +135,11 @@ Each `.json` file can define hooks for multiple events:
 
 ### Key Fields
 
-- **Event name** (top-level key): any event listed in [Hook Events](#hook-events). Grok skips unrecognized event names so a shared Claude or Cursor settings file still loads.
+- **Event name** (top-level key): any event listed in [Hook Events](#hook-events). Grok skips unrecognized event names.
 - **matcher** (optional): A regular expression that selects which invocations trigger the hook. What it tests depends on the event: the tool name on tool events (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`), the notification type on `Notification`, the subagent type on `SubagentStart`/`SubagentStop` (e.g. `explore`), the start source on `SessionStart` (`startup`, `resume`, …), the end reason on `SessionEnd`, the compaction trigger on `PreCompact`/`PostCompact` (`manual` or `auto`), and the error type on `StopFailure` (`rate_limit`, `authentication_failed`, `invalid_request`, `server_error`, `max_output_tokens`, or `unknown`). A matcher on `Stop` or `UserPromptSubmit` is ignored with a warning (those events always fire). An empty or omitted matcher matches everything. The matcher tests the real tool name; MCP calls routed through the internal `use_tool` dispatcher appear as the qualified `server__tool` name (e.g. `linear__save_issue`), so match on that, not the dispatcher name.
 - **type**: `"command"` (run a script or shell one-liner) or `"http"` (POST the event to a URL).
 - **command**: Path to executable (relative to the JSON file) or inline shell command.
 - **timeout**: Seconds before killing the hook (default: 5, or 600 for `Stop`/`SubagentStop` gates, matching Claude Code). All hook failures (timeouts, crashes, malformed output, missing required env vars) are fail-open: the failure is recorded for the UI scrollback but the tool call is not blocked. Only an explicit `deny` decision returned by the hook blocks a tool call.
-
-### Tool Name Aliases
-
-In a `matcher`, Grok maps Claude-style tool names to its own so hooks migrated from Claude fire correctly. Common aliases include:
-
-- `Bash` → `run_terminal_command`
-- `Read` → `read_file`
-- `Edit`, `Write`, and `MultiEdit` → `search_replace`
-- `Grep` → `grep`
-- `Glob` and `ListDir` → `list_dir`
-- `WebSearch` → `web_search`
-- `Task` → `spawn_subagent`
-
-A matcher keeps its original name too, so `Bash` matches both `Bash` and `run_terminal_command`.
 
 ---
 
@@ -317,7 +289,6 @@ These variables are set by the hook runner for **every** hook:
 | `GROK_HOOK_NAME`      | The configured name of this specific hook (includes the plugin prefix for plugin-provided hooks). |
 | `GROK_SESSION_ID`     | The unique identifier of the current Grok session. |
 | `GROK_WORKSPACE_ROOT` | Absolute path to the root of the current workspace. |
-| `CLAUDE_PROJECT_DIR`  | Absolute path to the workspace root. A Claude Code-compatible alias for `GROK_WORKSPACE_ROOT`, set for every hook. |
 
 These variables are **reserved**. Any values you attempt to set for them via the `env` field in your hook JSON are stripped at load time (a warning is logged), and the runner always injects the real values at spawn time.
 
@@ -330,7 +301,7 @@ When a hook originates from a plugin, Grok additionally injects the following va
 | `GROK_PLUGIN_ROOT`   | Absolute path to the plugin's installed directory. |
 | `GROK_PLUGIN_DATA`   | Absolute path to the plugin's writable data directory (for storing plugin state, caches, etc.). |
 
-These values are provided by the plugin system. For the four plugin-related keys (`GROK_PLUGIN_ROOT`, `GROK_PLUGIN_DATA`, and their Claude aliases), the plugin adapter ensures the official plugin values always win over any user-declared values in the hook's `env` map.
+These values are provided by the plugin system. For these two plugin-related keys, the plugin adapter ensures the official plugin values always win over any user-declared values in the hook's `env` map.
 
 #### User-defined environment variables
 

@@ -896,9 +896,12 @@ pub(crate) async fn run(
     );
     app.foreign_session_compat =
         xai_grok_workspace::foreign_sessions::EnabledForeignSessionSources {
-            claude: compat.claude.sessions,
-            codex: compat.codex.sessions,
-            cursor: compat.cursor.sessions,
+            // These vendors are deliberately not configurable in this build.
+            // Keep the UI's source state hard-off at the construction site as
+            // well as at the scanner boundary.
+            claude: false,
+            codex: false,
+            cursor: xai_grok_config::CURSOR_COMPAT_ENABLED && compat.cursor.sessions,
         };
     if let Some(ref raw) = effective_config {
         app.notification_service = crate::notifications::NotificationService::new(

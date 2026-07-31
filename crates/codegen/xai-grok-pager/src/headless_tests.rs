@@ -470,3 +470,18 @@ fn parse_json_schema_rejects_non_objects_and_invalid_json() {
             .contains("invalid JSON")
     );
 }
+
+#[test]
+fn cli_agents_reserve_exact_codex_name_only() {
+    let error = super::parse_cli_agents(
+        r#"{"codex":{"name":"ordinary-helper","description":"reserved key"}}"#,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("reserved and build-disabled"));
+
+    let agents =
+        super::parse_cli_agents(r#"{"codex-helper":{"description":"ordinary helper"}}"#)
+            .unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].name, "codex-helper");
+}
