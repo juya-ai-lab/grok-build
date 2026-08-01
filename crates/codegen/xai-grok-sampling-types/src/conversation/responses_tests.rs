@@ -1571,20 +1571,24 @@ fn backend_tool_call_position_stable() {
         kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
             id: "ws_a".to_string(),
             status: rs::WebSearchToolCallStatus::Completed,
-            action: rs::WebSearchToolCallAction::Search(rs::WebSearchActionSearch {
-                query: "alpha".to_string(),
-                sources: Some(vec![]),
-            }),
+            action: Some(rs::WebSearchToolCallAction::Search(
+                rs::WebSearchActionSearch {
+                    query: "alpha".to_string(),
+                    sources: Some(vec![]),
+                },
+            )),
         }),
     });
     let ws_b = ConversationItem::BackendToolCall(BackendToolCallItem {
         kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
             id: "ws_b".to_string(),
             status: rs::WebSearchToolCallStatus::Completed,
-            action: rs::WebSearchToolCallAction::Search(rs::WebSearchActionSearch {
-                query: "beta".to_string(),
-                sources: Some(vec![]),
-            }),
+            action: Some(rs::WebSearchToolCallAction::Search(
+                rs::WebSearchActionSearch {
+                    query: "beta".to_string(),
+                    sources: Some(vec![]),
+                },
+            )),
         }),
     });
 

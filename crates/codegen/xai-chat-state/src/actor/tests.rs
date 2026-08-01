@@ -4546,10 +4546,12 @@ async fn prefix_stable_with_backend_tool_calls() {
             kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
                 id: "ws_capybara".to_string(),
                 status: rs::WebSearchToolCallStatus::Completed,
-                action: rs::WebSearchToolCallAction::Search(rs::WebSearchActionSearch {
-                    query: "capybara facts".to_string(),
-                    sources: Some(vec![]),
-                }),
+                action: Some(rs::WebSearchToolCallAction::Search(
+                    rs::WebSearchActionSearch {
+                        query: "capybara facts".to_string(),
+                        sources: Some(vec![]),
+                    },
+                )),
             }),
         }));
     h.handle

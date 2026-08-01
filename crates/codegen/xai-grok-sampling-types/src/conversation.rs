@@ -352,15 +352,16 @@ impl BackendToolCallItem {
     pub fn text_summary(&self) -> String {
         match &self.kind {
             BackendToolKind::WebSearch(ws) => {
-                let action_desc = match &ws.action {
-                    rs::WebSearchToolCallAction::Search(s) => format!("search: {}", s.query),
-                    rs::WebSearchToolCallAction::OpenPage(o) => {
+                let action_desc = match ws.action.as_ref() {
+                    Some(rs::WebSearchToolCallAction::Search(s)) => format!("search: {}", s.query),
+                    Some(rs::WebSearchToolCallAction::OpenPage(o)) => {
                         format!("open: {}", o.url.as_deref().unwrap_or("?"))
                     }
-                    rs::WebSearchToolCallAction::Find(f)
-                    | rs::WebSearchToolCallAction::FindInPage(f) => {
+                    Some(rs::WebSearchToolCallAction::Find(f))
+                    | Some(rs::WebSearchToolCallAction::FindInPage(f)) => {
                         format!("find \"{}\" in {}", f.pattern, f.url)
                     }
+                    None => "pending".to_string(),
                 };
                 format!("[backend web_search] {action_desc}")
             }
@@ -4988,10 +4989,12 @@ mod tests {
             rs::OutputItem::WebSearchCall(rs::WebSearchToolCall {
                 id: format!("ws_resp123_{suffix}"),
                 status: rs::WebSearchToolCallStatus::Completed,
-                action: rs::WebSearchToolCallAction::Search(rs::WebSearchActionSearch {
-                    query: query.to_string(),
-                    sources: Some(vec![]),
-                }),
+                action: Some(rs::WebSearchToolCallAction::Search(
+                    rs::WebSearchActionSearch {
+                        query: query.to_string(),
+                        sources: Some(vec![]),
+                    },
+                )),
             })
         };
 
@@ -5147,10 +5150,12 @@ mod tests {
                 kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
                     id: "ws_1".to_string(),
                     status: rs::WebSearchToolCallStatus::Completed,
-                    action: rs::WebSearchToolCallAction::Search(rs::WebSearchActionSearch {
-                        query: "capybaras".to_string(),
-                        sources: Some(vec![]),
-                    }),
+                    action: Some(rs::WebSearchToolCallAction::Search(
+                        rs::WebSearchActionSearch {
+                            query: "capybaras".to_string(),
+                            sources: Some(vec![]),
+                        },
+                    )),
                 }),
             }),
             ConversationItem::assistant("answer"),
@@ -5193,10 +5198,12 @@ mod tests {
             kind: BackendToolKind::WebSearch(rs::WebSearchToolCall {
                 id: "ws_1".to_string(),
                 status: rs::WebSearchToolCallStatus::Completed,
-                action: rs::WebSearchToolCallAction::Search(rs::WebSearchActionSearch {
-                    query: "capybaras".to_string(),
-                    sources: Some(vec![]),
-                }),
+                action: Some(rs::WebSearchToolCallAction::Search(
+                    rs::WebSearchActionSearch {
+                        query: "capybaras".to_string(),
+                        sources: Some(vec![]),
+                    },
+                )),
             }),
         });
 
