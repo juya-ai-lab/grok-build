@@ -1,0 +1,143 @@
+# Publish prebuilt binaries to npm after a successful release build.
+#
+# Triggered as a reusable workflow by CI - Release once every platform leg
+# has finished, or manually from the Actions tab. Downloads the six platform
+# binaries from the release tag, builds the @juya-ai-lab/grok-build-<os>-<arch>
+# platform packages plus the wrapper package @juya-ai-lab/grok-build, then
+# publishes them (platforms first, wrapper last). npm/pnpm resolve the
+# matching platform package via optionalDependencies; no install scripts are
+# used, so npm's install-script gating does not affect installation.
+#
+# Requirements:
+#   - Repository secret NPM_TOKEN with publish access to the @juya-ai-lab
+#     scope on the npm registry (the scope must exist on npm).
+#   - The release tag must contain all six platform assets plus checksums.
+#
+# Publishing is idempotent: versions already present on the registry are
+# skipped, so re-running the workflow does not fail.
+
+name: CI - Publish Npm Packages
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag whose assets should be published (e.g. v0.2.117)
+        required: true
+        type: string
+    secrets:
+      NPM_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag whose assets should be published (e.g. v0.2.117)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # One distribution run per release tag; a manual re-run cancels a stale run.
+  group: dist-npm-${{ inputs.tag }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish Npm Packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Resolve Version
+        id: ver
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
+            echo "Invalid release tag: ${TAG} (expected vX.Y.Z or vX.Y.Z-suffix)" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Download and Verify Release Assets
+        env:
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/assets"
+          assets=(
+            "grok-${VERSION}-linux-x86_64"
+            "grok-${VERSION}-linux-aarch64"
+            "grok-${VERSION}-macos-x86_64"
+            "grok-${VERSION}-macos-aarch64"
+            "grok-${VERSION}-windows-x86_64.exe"
+            "grok-${VERSION}-windows-aarch64.exe"
+          )
+          for asset in "${assets[@]}"; do
+            gh release download "${TAG}" -R "${{ github.repository }}" \
+              -p "${asset}" -p "${asset}.sha256" -D "${RUNNER_TEMP}/assets" --clobber
+          done
+          cd "${RUNNER_TEMP}/assets"
+          for asset in "${assets[@]}"; do
+            if [ ! -f "$asset" ] || [ ! -f "$asset.sha256" ]; then
+              echo "Missing release asset: ${asset}" >&2
+              exit 1
+            fi
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum -c "$asset.sha256"
+            else
+              shasum -a 256 -c "$asset.sha256"
+            fi
+          done
+
+      - name: Build Npm Packages
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          node npm/build-packages.mjs \
+            "${VERSION}" \
+            "${RUNNER_TEMP}/assets" \
+            "${RUNNER_TEMP}/packages" \
+            "${RUNNER_TEMP}/packages/manifest.txt"
+
+      - name: Publish to Npm Registry
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret is not configured. Add it in Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          dist_tag="latest"
+          if [[ "${VERSION}" == *-* ]]; then
+            dist_tag="next"
+          fi
+          while IFS= read -r pkg_dir; do
+            [ -n "${pkg_dir}" ] || continue
+            pkg_name="$(node -p "require('${pkg_dir}/package.json').name")"
+            if npm view "${pkg_name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "Already published: ${pkg_name}@${VERSION}"
+              continue
+            fi
+            echo "Publishing ${pkg_name}@${VERSION} (dist-tag ${dist_tag})"
+            (cd "${pkg_dir}" && npm publish --access public --tag "${dist_tag}")
+          done < "${RUNNER_TEMP}/packages/manifest.txt"

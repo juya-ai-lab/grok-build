@@ -5,7 +5,8 @@
 #   prepare (resolve version, create tag if missing) → build × 6
 #   (parallel, fail-fast: false); each platform publishes its own binary
 #   and per-platform checksum as soon as it finishes, without waiting for
-#   the slower matrix legs.
+#   the slower matrix legs. When every leg succeeds, the npm-publish job
+#   packages all six binaries and publishes them to npm.
 #
 # A platform that finishes the full build/package/publish path releases its
 # assets even if other matrix legs fail. Lint gates belong on PR CI, not here.
@@ -42,6 +43,9 @@ on:
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -413,3 +417,12 @@ jobs:
           files: |
             ${{ steps.pkg.outputs.asset_path }}
             ${{ steps.pkg.outputs.asset_path }}.sha256
+
+  npm-publish:
+    name: Publish Npm Packages
+    needs: [prepare, build]
+    uses: ./.github/workflows/dist-npm.yml
+    with:
+      tag: v${{ needs.prepare.outputs.version }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

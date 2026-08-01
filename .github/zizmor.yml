@@ -17,3 +17,10 @@ rules:
   superfluous-actions:
     ignore:
       - release.yml
+  # npm publishing authenticates with an automation token (NPM_TOKEN) stored
+  # as a repository secret with publish-only access to the @juya-ai-lab scope.
+  # npm trusted publishing (OIDC) can be adopted later once the npm org is
+  # configured as a trusted publisher for this repository.
+  use-trusted-publishing:
+    ignore:
+      - dist-npm.yml
