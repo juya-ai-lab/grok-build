@@ -19,7 +19,7 @@ so npm's install-script gating does not affect installation.
 ## Run
 
 ```sh
-grok-build
+grok
 # or, without installing
 npx @juya-ai-lab/grok-build
 ```

@@ -74,7 +74,7 @@ for (const p of PLATFORMS) {
       {
         name: platformName(p),
         version,
-        description: `grok-build binary for ${p.os}-${p.arch}`,
+        description: `grok binary for ${p.os}-${p.arch}`,
         license: LICENSE,
         os: [p.os],
         cpu: [p.arch],
@@ -106,7 +106,7 @@ writeFileSync(
     {
       name: `${SCOPE}/${PACKAGE_NAME}`,
       version,
-      description: "grok-build terminal agent CLI (prebuilt binaries via optionalDependencies)",
+      description: "grok terminal agent CLI (prebuilt binaries via optionalDependencies)",
       license: LICENSE,
       homepage: HOMEPAGE,
       repository: {
@@ -114,7 +114,7 @@ writeFileSync(
         url: `git+${HOMEPAGE}.git`,
       },
       bin: {
-        "grok-build": "bin/grok-build.js",
+        grok: "bin/grok-build.js",
       },
       files: ["bin", "README.md"],
       optionalDependencies,
