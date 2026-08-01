@@ -145,13 +145,14 @@ jobs:
             printf '## Release %s\n' "${TAG}" > "$notes_file"
           else
             commits="$(git log --no-merges --format='- %s' "${prev}..HEAD" 2>/dev/null || true)"
-            : > "$notes_file"
-            if [ -n "$commits" ]; then
-              printf "## What's Changed\n" >> "$notes_file"
-              printf '%s\n' "$commits" >> "$notes_file"
-              printf '\n' >> "$notes_file"
-            fi
-            printf '**Full Changelog**: https://github.com/juya-ai-lab/grok-build/compare/%s...%s\n' "${prev}" "${TAG}" >> "$notes_file"
+            {
+              if [ -n "$commits" ]; then
+                printf "## What's Changed\n"
+                printf '%s\n' "$commits"
+                printf '\n'
+              fi
+              printf '**Full Changelog**: https://github.com/juya-ai-lab/grok-build/compare/%s...%s\n' "${prev}" "${TAG}"
+            } > "$notes_file"
           fi
           {
             echo "release_notes<<RELEASE_NOTES_EOF"
