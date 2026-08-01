@@ -1,0 +1,44 @@
+name: Check Token Expiry
+description: Warn or fail when configured CI tokens are close to or past their expiry dates.
+
+inputs:
+  config:
+    description: Path to the token expiry config file
+    required: false
+    default: .github/token-expiry.env
+  tokens:
+    description: Comma-separated token names to check (e.g. RELEASE_TOKEN,NPM_TOKEN)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check Expiry Dates
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        TOKENS: ${{ inputs.tokens }}
+      run: |
+        set -euo pipefail
+        today_ts="$(date -d "$(date +%F)" +%s)"
+        for name in ${TOKENS//,/ }; do
+          expiry="$(sed -n "s/^${name}_EXPIRY=//p" "${CONFIG}" | tail -1 | tr -d '"' | tr -d '[:space:]')"
+          if [ -z "${expiry}" ]; then
+            echo "::notice::${name}: no expiry date configured (${name}_EXPIRY in ${CONFIG}); skipping check"
+            continue
+          fi
+          if ! date -d "${expiry}" >/dev/null 2>&1; then
+            echo "::error::${name}: invalid expiry date '${expiry}' in ${CONFIG} (expected YYYY-MM-DD)"
+            exit 1
+          fi
+          expiry_ts="$(date -d "${expiry}" +%s)"
+          days_left=$(( (expiry_ts - today_ts) / 86400 ))
+          if [ "${days_left}" -lt 0 ]; then
+            echo "::error::${name} expired on ${expiry}. Renew the token and update both the repository secret and ${CONFIG}."
+            exit 1
+          elif [ "${days_left}" -le 30 ]; then
+            echo "::warning::${name} expires on ${expiry} (${days_left} days left). Renew the token before then."
+          else
+            echo "${name} OK: expires on ${expiry} (${days_left} days left)."
+          fi
+        done

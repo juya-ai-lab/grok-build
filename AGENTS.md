@@ -45,6 +45,7 @@
 - **Workflow and Dependency Checks**：actionlint + zizmor + cargo-deny，独立、不阻塞发布，路径过滤 + concurrency。
 - 命名：workflow/job/step 用 `CI - xxx` 纯文字前缀、Title Case，无冒号、无 emoji。
 - 工具版本锁定：zizmor / cargo-deny / actionlint 固定版本，升级手动并验证。
+- Token 到期：到期日期集中在 `.github/token-expiry.env`，release/dist workflow 启动时检查（≤30 天 warning，过期 fail）；换 token 时同步更新该文件与仓库 secret。
 
 ## 工作习惯约定
 

@@ -11,6 +11,8 @@
 # Requirements:
 #   - Repository secret NPM_TOKEN with publish access to the @juya-ai-lab
 #     scope on the npm registry (the scope must exist on npm).
+#   - Token expiry dates live in .github/token-expiry.env; this workflow
+#     warns within 30 days of expiry and fails when a token has expired.
 #   - The release tag must contain all six platform assets plus checksums.
 #
 # Publishing is idempotent: versions already present on the registry are
@@ -96,6 +98,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check NPM Token Expiry
+        uses: ./.github/actions/check-token-expiry
+        with:
+          tokens: NPM_TOKEN
+
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -145,7 +152,7 @@ jobs:
             "${VERSION}" \
             "${RUNNER_TEMP}/assets" \
             "${RUNNER_TEMP}/packages" \
-            "${RUNNER_TEMP}/packages/manifest.txt"
+            "${RUNNER_TEMP}/packages/manifest.txt" \
             "${ASSET_VERSION}"
 
       - name: Publish to Npm Registry

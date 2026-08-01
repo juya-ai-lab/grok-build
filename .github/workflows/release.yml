@@ -77,6 +77,13 @@ jobs:
           # Full history so release notes can diff commits between tags.
           fetch-depth: 0
 
+      - name: Check Token Expiry
+        uses: ./.github/actions/check-token-expiry
+        with:
+          # Expiry dates live in .github/token-expiry.env; renew tokens and
+          # update both the repository secret and that file.
+          tokens: RELEASE_TOKEN,NPM_TOKEN
+
       - name: Resolve Version
         id: ver
         shell: bash
@@ -410,7 +417,7 @@ jobs:
           # GITHUB_TOKEN cannot be granted the Workflows write permission that
           # GitHub now requires when the released commit touches .github/workflows;
           # RELEASE_TOKEN is a fine-grained PAT scoped to this repo with
-          # Contents + Workflows write.
+          # Contents + Workflows write. Expiry date: .github/token-expiry.env.
           token: ${{ secrets.RELEASE_TOKEN }}
           # Re-running / partial matrices should attach newly built assets.
           fail_on_unmatched_files: false
