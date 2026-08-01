@@ -4548,7 +4548,7 @@ async fn prefix_stable_with_backend_tool_calls() {
                 status: rs::WebSearchToolCallStatus::Completed,
                 action: Some(rs::WebSearchToolCallAction::Search(
                     rs::WebSearchActionSearch {
-                        query: "capybara facts".to_string(),
+                        query: Some("capybara facts".to_string()),
                         sources: Some(vec![]),
                     },
                 )),

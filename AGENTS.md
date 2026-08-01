@@ -37,7 +37,7 @@
 - `Cargo.toml` / `Cargo.lock`：合入后 `cargo check` + `cargo deny check` 验证；`deny.toml` 许可证白名单按需补充。
 - `.github/` 一律保留本仓库的 CI，不采用上游 workflow。
 - 版本：上游 bump 后 release tag 自动跟随（`vX.Y.Z`）；若版本 crate 路径变化，更新 `VERSION_CRATE_MANIFEST`。
-- `async-openai` 依赖（临时改动）：pin 到 `juya-ai-lab/async-openai`（镜像 xAI fork 基座 `95b52eb` + #548 backport：`WebSearchToolCall.action` 改为可选，修复流式 `web_search_call` 偶发 `missing field action`）。上游 xai-org 仍 pin `our-forks` 的 `95b52eb`；待上游升级/修复后对齐并移除本临时镜像。
+- `async-openai` 依赖（临时改动）：pin 到 `juya-ai-lab/async-openai`（镜像 xAI fork 基座 `95b52eb` + #548 backport：`WebSearchToolCall.action` 与 `WebSearchActionSearch.query` 改为可选，修复流式 `web_search_call` 偶发 `missing field action` / `missing field query`）。上游 xai-org 仍 pin `our-forks` 的 `95b52eb`；待上游升级/修复后对齐并移除本临时镜像。
 
 ## CI 约定（本仓库自持）
 

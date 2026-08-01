@@ -2,9 +2,10 @@
 
 [patch.crates-io]
 # juya-ai-lab mirror of the xAI async-openai fork (base 95b52eb) plus a
-# backport making WebSearchToolCall.action optional (#548), so in-progress
-# web_search_call stream events deserialize without "missing field `action`".
-async-openai = { git = "https://github.com/juya-ai-lab/async-openai.git", rev = "3ed9b028b92254b001185faa877c1830ceff5954" }
+# backport making WebSearchToolCall.action and WebSearchActionSearch.query
+# optional (#548), so in-progress web_search_call stream events deserialize
+# without "missing field `action`" / "missing field `query`" errors.
+async-openai = { git = "https://github.com/juya-ai-lab/async-openai.git", rev = "baa48e9d1558a56ac66a5bc6b272fe0e02477493" }
 
 [workspace]
 resolver = "2"

@@ -442,7 +442,7 @@ mod tests {
         serde_json::to_value(rs::WebSearchToolCall {
             action: Some(rs::WebSearchToolCallAction::Search(
                 rs::WebSearchActionSearch {
-                    query: "rust async runtime".to_string(),
+                    query: Some("rust async runtime".to_string()),
                     sources: None,
                 },
             )),

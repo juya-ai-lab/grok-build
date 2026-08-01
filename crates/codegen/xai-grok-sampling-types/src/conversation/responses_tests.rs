@@ -1573,7 +1573,7 @@ fn backend_tool_call_position_stable() {
             status: rs::WebSearchToolCallStatus::Completed,
             action: Some(rs::WebSearchToolCallAction::Search(
                 rs::WebSearchActionSearch {
-                    query: "alpha".to_string(),
+                    query: Some("alpha".to_string()),
                     sources: Some(vec![]),
                 },
             )),
@@ -1585,7 +1585,7 @@ fn backend_tool_call_position_stable() {
             status: rs::WebSearchToolCallStatus::Completed,
             action: Some(rs::WebSearchToolCallAction::Search(
                 rs::WebSearchActionSearch {
-                    query: "beta".to_string(),
+                    query: Some("beta".to_string()),
                     sources: Some(vec![]),
                 },
             )),

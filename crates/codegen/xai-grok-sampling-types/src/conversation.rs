@@ -353,7 +353,9 @@ impl BackendToolCallItem {
         match &self.kind {
             BackendToolKind::WebSearch(ws) => {
                 let action_desc = match ws.action.as_ref() {
-                    Some(rs::WebSearchToolCallAction::Search(s)) => format!("search: {}", s.query),
+                    Some(rs::WebSearchToolCallAction::Search(s)) => {
+                        format!("search: {}", s.query.as_deref().unwrap_or("?"))
+                    }
                     Some(rs::WebSearchToolCallAction::OpenPage(o)) => {
                         format!("open: {}", o.url.as_deref().unwrap_or("?"))
                     }
@@ -4991,7 +4993,7 @@ mod tests {
                 status: rs::WebSearchToolCallStatus::Completed,
                 action: Some(rs::WebSearchToolCallAction::Search(
                     rs::WebSearchActionSearch {
-                        query: query.to_string(),
+                        query: Some(query.to_string()),
                         sources: Some(vec![]),
                     },
                 )),
@@ -5152,7 +5154,7 @@ mod tests {
                     status: rs::WebSearchToolCallStatus::Completed,
                     action: Some(rs::WebSearchToolCallAction::Search(
                         rs::WebSearchActionSearch {
-                            query: "capybaras".to_string(),
+                            query: Some("capybaras".to_string()),
                             sources: Some(vec![]),
                         },
                     )),
@@ -5200,7 +5202,7 @@ mod tests {
                 status: rs::WebSearchToolCallStatus::Completed,
                 action: Some(rs::WebSearchToolCallAction::Search(
                     rs::WebSearchActionSearch {
-                        query: "capybaras".to_string(),
+                        query: Some("capybaras".to_string()),
                         sources: Some(vec![]),
                     },
                 )),
