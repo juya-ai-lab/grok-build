@@ -1574,6 +1574,7 @@ fn backend_tool_call_position_stable() {
             action: Some(rs::WebSearchToolCallAction::Search(
                 rs::WebSearchActionSearch {
                     query: Some("alpha".to_string()),
+                    queries: vec!["alpha".to_string()],
                     sources: Some(vec![]),
                 },
             )),
@@ -1586,6 +1587,7 @@ fn backend_tool_call_position_stable() {
             action: Some(rs::WebSearchToolCallAction::Search(
                 rs::WebSearchActionSearch {
                     query: Some("beta".to_string()),
+                    queries: vec!["beta".to_string()],
                     sources: Some(vec![]),
                 },
             )),

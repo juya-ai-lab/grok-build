@@ -443,6 +443,7 @@ mod tests {
             action: Some(rs::WebSearchToolCallAction::Search(
                 rs::WebSearchActionSearch {
                     query: Some("rust async runtime".to_string()),
+                    queries: vec!["rust async runtime".to_string()],
                     sources: None,
                 },
             )),

@@ -4549,6 +4549,7 @@ async fn prefix_stable_with_backend_tool_calls() {
                 action: Some(rs::WebSearchToolCallAction::Search(
                     rs::WebSearchActionSearch {
                         query: Some("capybara facts".to_string()),
+                        queries: vec!["capybara facts".to_string()],
                         sources: Some(vec![]),
                     },
                 )),

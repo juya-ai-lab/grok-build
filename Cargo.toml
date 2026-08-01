@@ -4,8 +4,8 @@
 # juya-ai-lab mirror of the xAI async-openai fork (base 95b52eb) plus a
 # backport making WebSearchToolCall.action and WebSearchActionSearch.query
 # optional (#548), so in-progress web_search_call stream events deserialize
-# without "missing field `action`" / "missing field `query`" errors.
-async-openai = { git = "https://github.com/juya-ai-lab/async-openai.git", rev = "baa48e9d1558a56ac66a5bc6b272fe0e02477493" }
+# without "missing field `action`" / "missing field `query`" errors; DeepSeek plural queries supported.
+async-openai = { git = "https://github.com/juya-ai-lab/async-openai.git", rev = "7defed8a9049622f2289cf3fe30854fc22e4c49d" }
 
 [workspace]
 resolver = "2"
