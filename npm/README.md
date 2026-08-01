@@ -25,4 +25,5 @@ npx @juya-ai-lab/grok-build
 ```
 
 Package versions mirror the GitHub release tags (for example `0.2.117`
-corresponds to tag `v0.2.117`).
+corresponds to tag `v0.2.117`). Packaging-only hotfixes use a `-fix.N`
+suffix (for example `0.2.117-fix.1`).

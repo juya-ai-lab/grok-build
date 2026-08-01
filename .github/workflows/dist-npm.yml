@@ -15,6 +15,10 @@
 #
 # Publishing is idempotent: versions already present on the registry are
 # skipped, so re-running the workflow does not fail.
+#
+# Manual runs may override the npm version (e.g. 0.2.117-fix.1) and dist-tag
+# (e.g. latest) so packaging-only hotfixes can be published without creating
+# a new GitHub release tag. Asset names always use the tag-derived version.
 
 name: CI - Publish Npm Packages
 
@@ -25,6 +29,16 @@ on:
         description: Release tag whose assets should be published (e.g. v0.2.117)
         required: true
         type: string
+      version:
+        description: Override npm package version (defaults to the tag-derived version)
+        required: false
+        type: string
+        default: ""
+      dist-tag:
+        description: npm dist-tag to publish under (defaults to latest, or next for prerelease versions)
+        required: false
+        type: string
+        default: ""
     secrets:
       NPM_TOKEN:
         required: true
@@ -33,6 +47,14 @@ on:
       tag:
         description: Release tag whose assets should be published (e.g. v0.2.117)
         required: true
+        type: string
+      version:
+        description: Override npm package version (defaults to the tag-derived version, e.g. 0.2.117-fix.1)
+        required: false
+        type: string
+      dist-tag:
+        description: npm dist-tag to publish under (defaults to latest, or next for prerelease versions)
+        required: false
         type: string
 
 permissions:
@@ -53,14 +75,21 @@ jobs:
         id: ver
         env:
           TAG: ${{ inputs.tag }}
+          VERSION_OVERRIDE: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${TAG#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
+          asset_version="${TAG#v}"
+          if [[ ! "$asset_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
             echo "Invalid release tag: ${TAG} (expected vX.Y.Z or vX.Y.Z-suffix)" >&2
             exit 1
           fi
+          version="${VERSION_OVERRIDE:-${asset_version}}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
+            echo "Invalid npm version override: ${version} (expected X.Y.Z or X.Y.Z-suffix)" >&2
+            exit 1
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "asset_version=${asset_version}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -76,18 +105,18 @@ jobs:
       - name: Download and Verify Release Assets
         env:
           TAG: ${{ inputs.tag }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          ASSET_VERSION: ${{ steps.ver.outputs.asset_version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p "${RUNNER_TEMP}/assets"
           assets=(
-            "grok-${VERSION}-linux-x86_64"
-            "grok-${VERSION}-linux-aarch64"
-            "grok-${VERSION}-macos-x86_64"
-            "grok-${VERSION}-macos-aarch64"
-            "grok-${VERSION}-windows-x86_64.exe"
-            "grok-${VERSION}-windows-aarch64.exe"
+            "grok-${ASSET_VERSION}-linux-x86_64"
+            "grok-${ASSET_VERSION}-linux-aarch64"
+            "grok-${ASSET_VERSION}-macos-x86_64"
+            "grok-${ASSET_VERSION}-macos-aarch64"
+            "grok-${ASSET_VERSION}-windows-x86_64.exe"
+            "grok-${ASSET_VERSION}-windows-aarch64.exe"
           )
           for asset in "${assets[@]}"; do
             gh release download "${TAG}" -R "${{ github.repository }}" \
@@ -121,15 +150,23 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
+          DIST_TAG: ${{ inputs.dist-tag }}
         run: |
           set -euo pipefail
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::error::NPM_TOKEN secret is not configured. Add it in Settings -> Secrets and variables -> Actions."
             exit 1
           fi
-          dist_tag="latest"
-          if [[ "${VERSION}" == *-* ]]; then
-            dist_tag="next"
+          dist_tag="${DIST_TAG}"
+          if [ -z "${dist_tag}" ]; then
+            dist_tag="latest"
+            if [[ "${VERSION}" == *-* ]]; then
+              dist_tag="next"
+            fi
+          fi
+          if [[ ! "${dist_tag}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid dist-tag: ${dist_tag}" >&2
+            exit 1
           fi
           while IFS= read -r pkg_dir; do
             [ -n "${pkg_dir}" ] || continue
