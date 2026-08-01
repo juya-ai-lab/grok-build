@@ -138,6 +138,7 @@ jobs:
       - name: Build Npm Packages
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          ASSET_VERSION: ${{ steps.ver.outputs.asset_version }}
         run: |
           set -euo pipefail
           node npm/build-packages.mjs \
@@ -145,6 +146,7 @@ jobs:
             "${RUNNER_TEMP}/assets" \
             "${RUNNER_TEMP}/packages" \
             "${RUNNER_TEMP}/packages/manifest.txt"
+            "${ASSET_VERSION}"
 
       - name: Publish to Npm Registry
         env:

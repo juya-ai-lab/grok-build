@@ -2,13 +2,15 @@
 // Build the npm packages for @juya-ai-lab/grok-build from GitHub Release assets.
 //
 // Usage:
-//   node npm/build-packages.mjs <version> <assetsDir> <outDir> <manifestPath>
+//   node npm/build-packages.mjs <version> <assetsDir> <outDir> <manifestPath> [assetVersion]
 //
 // assetsDir must contain the six release assets produced by the release
-// workflow (grok-<version>-<platform>[.exe]) plus their .sha256 files.
+// workflow (grok-<assetVersion>-<platform>[.exe]) plus their .sha256 files.
 // The script writes six platform packages (one prebuilt binary each) and the
 // main wrapper package, then writes a manifest listing every package dir in
-// publish order: platform packages first, main package last.
+// publish order: platform packages first, main package last. assetVersion
+// defaults to version and only affects asset file names, so packaging-only
+// hotfixes (e.g. 0.2.117-fix.1) can reuse assets from a release tag (0.2.117).
 
 import {
   chmodSync,
@@ -34,11 +36,12 @@ const PLATFORMS = [
   { release: "windows-aarch64", os: "win32", arch: "arm64", exe: ".exe" },
 ];
 
-const [, , version, assetsDir, outDir, manifestPath] = process.argv;
+const [, , version, assetsDir, outDir, manifestPath, assetVersionArg] = process.argv;
+const assetVersion = assetVersionArg || version;
 
 if (!version || !assetsDir || !outDir || !manifestPath) {
   console.error(
-    "Usage: node npm/build-packages.mjs <version> <assetsDir> <outDir> <manifestPath>"
+    "Usage: node npm/build-packages.mjs <version> <assetsDir> <outDir> <manifestPath> [assetVersion]"
   );
   process.exit(1);
 }
@@ -52,7 +55,7 @@ const platformName = (p) => `${SCOPE}/${PACKAGE_NAME}-${p.os}-${p.arch}`;
 const publishOrder = [];
 
 for (const p of PLATFORMS) {
-  const asset = `grok-${version}-${p.release}${p.exe}`;
+  const asset = `grok-${assetVersion}-${p.release}${p.exe}`;
   const assetPath = join(assetsDir, asset);
   if (!existsSync(assetPath)) {
     console.error(`Missing release asset: ${assetPath}`);
