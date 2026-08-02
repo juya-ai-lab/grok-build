@@ -16,7 +16,12 @@
 #   - The release tag must contain all six platform assets plus checksums.
 #
 # Publishing is idempotent: versions already present on the registry are
-# skipped, so re-running the workflow does not fail.
+# skipped, so re-running the workflow does not fail. Two npm-registry quirks
+# are handled explicitly: E409 "Failed to save packument" (eventual-consistency
+# race when publishing scoped packages back-to-back) is retried with backoff,
+# and E400 "Cannot publish over previously published version" (a version that
+# was published then unpublished is tombstoned; `npm view` returns E404 for it
+# so the existence check cannot see it) is treated as already-published.
 #
 # Manual runs may override the npm version (e.g. 0.2.117-fix.1) and dist-tag
 # (e.g. latest) so packaging-only hotfixes can be published without creating
@@ -51,11 +56,18 @@ on:
         required: true
         type: string
       version:
-        description: Override npm package version (defaults to the tag-derived version, e.g. 0.2.117-fix.1)
+        description: >-
+          Override npm package version: X.Y.Z or X.Y.Z-suffix, no "v" prefix
+          (defaults to the tag-derived version, e.g. 0.2.117-fix4). npm
+          versions are immutable: never republish a version that already exists
+          or was unpublished - bump to a fresh version instead.
         required: false
         type: string
       dist-tag:
-        description: npm dist-tag to publish under (defaults to latest, or next for prerelease versions)
+        description: >-
+          npm dist-tag to publish under (defaults to latest, or next for
+          prerelease versions). Must NOT look like a version number (e.g.
+          0.2.118 is rejected by npm).
         required: false
         type: string
 
@@ -88,6 +100,7 @@ jobs:
           version="${VERSION_OVERRIDE:-${asset_version}}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._]+)?$ ]]; then
             echo "Invalid npm version override: ${version} (expected X.Y.Z or X.Y.Z-suffix)" >&2
+            echo "Hint: no 'v' prefix, and the suffix must not contain '-' or '/' (e.g. 0.2.117-fix4)" >&2
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
@@ -177,13 +190,46 @@ jobs:
             echo "Invalid dist-tag: ${dist_tag}" >&2
             exit 1
           fi
-          while IFS= read -r pkg_dir; do
-            [ -n "${pkg_dir}" ] || continue
+          publish_package() {
+            local pkg_dir="$1" pkg_name attempt err
             pkg_name="$(node -p "require('${pkg_dir}/package.json').name")"
             if npm view "${pkg_name}@${VERSION}" version >/dev/null 2>&1; then
               echo "Already published: ${pkg_name}@${VERSION}"
-              continue
+              return 0
             fi
             echo "Publishing ${pkg_name}@${VERSION} (dist-tag ${dist_tag})"
-            (cd "${pkg_dir}" && npm publish --access public --tag "${dist_tag}")
+            attempt=1
+            while :; do
+              err="$(mktemp)"
+              if (cd "${pkg_dir}" && npm publish --access public --tag "${dist_tag}" 2>"${err}"); then
+                rm -f "${err}"
+                return 0
+              fi
+              # E400 "Cannot publish over previously published version": the
+              # version was published before and is tombstoned (unpublished), so
+              # `npm view` above cannot see it. npm versions are immutable -
+              # treat it as already-published and keep going.
+              if grep -q "Cannot publish over previously published version" "${err}"; then
+                echo "Already published (unpublished version, cannot republish): ${pkg_name}@${VERSION}"
+                rm -f "${err}"
+                return 0
+              fi
+              # E409 "Failed to save packument": npm's eventual-consistency race
+              # when scoped packages are published back-to-back; the registry has
+              # not finished processing the previous package. Back off and retry.
+              if grep -q "code E409" "${err}" && [ "${attempt}" -lt 5 ]; then
+                echo "Registry still processing previous publish (E409), retry ${attempt}/5 in $((attempt * 15))s"
+                rm -f "${err}"
+                sleep "$((attempt * 15))"
+                attempt=$((attempt + 1))
+                continue
+              fi
+              cat "${err}" >&2
+              rm -f "${err}"
+              return 1
+            done
+          }
+          while IFS= read -r pkg_dir; do
+            [ -n "${pkg_dir}" ] || continue
+            publish_package "${pkg_dir}"
           done < "${RUNNER_TEMP}/packages/manifest.txt"
