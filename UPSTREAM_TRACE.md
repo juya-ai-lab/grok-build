@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 0d72ccd7 (2026-08-04)
+- 本地 HEAD: 10bb1a81 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 1 提交 / 本 fork 领先 102 提交; 树差异 220 个文件
+- 落后上游 1 提交 / 本 fork 领先 103 提交; 树差异 220 个文件
 - 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,7 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 10bb1a81 | 2026-08-04 | docs: record subagent watcher batch |
 | 0d72ccd7 | 2026-08-04 | fix: reuse watcher coverage for subagents |
 | 4f44478f | 2026-08-04 | docs: record watcher and git head batches |
 | 6c0f40d7 | 2026-08-04 | fix: refresh git head after same-branch commits |
@@ -230,6 +231,7 @@
 | `6c0f40d7` | 合入上游同分支 commit 后刷新已有 `x.ai/git_head_changed` 的本地 dedup key；将当前 commit 纳入身份，避免同一 branch 上新 commit 被错误去重；不改变通知 payload 或 opt-in | 上游批次 B2-GH；宗旨 2（本地会话/状态刷新功能）+ 宗旨 1（无新增上传/遥测）；`git_head_dedup_key_identity` 1 passed、slug_propagation 6 passed，尚未更新版本或 SOURCE_REV |
 | `0d72ccd7` | 仅合入上游 `handle_request` 中的 watcher 覆盖判断：子代理工作目录是否已由父 watcher 覆盖统一使用 `xai_fsnotify::watch_root_covers`；同一上游 diff 中的凭据统一日志、配置/目录元数据和上传/trace 改动明确排除 | 上游批次 B2-SW；宗旨 1（外部敏感数据不进入日志/上传边界）+ 宗旨 2（保留子代理本地 hunk tracking）；`xai-grok-shell` `subagent` 定向测试 315 passed、0 failed，未更新版本或 SOURCE_REV |
 | `4f44478f` | 记录 B2-W、B2-GH 的实现、测试和隐私裁剪证据；不改变运行时行为 | 宗旨 3：让每个选择性上游批次的证据可追溯 |
+| `10bb1a81` | 记录 B2-SW 的实现、测试和隐私裁剪证据；不改变运行时行为 | 宗旨 3：让每个选择性上游批次的证据可追溯 |
 | ddbee923 | docs: record incremental upstream batch；刷新生成式 trace 区块并记录 B1 的独立合入、测试和隐私结论 | 宗旨 3：上游分批决策和验证证据可追溯；不改变运行时行为 |
 
 ### 上游同步记录（未来在此追加）
