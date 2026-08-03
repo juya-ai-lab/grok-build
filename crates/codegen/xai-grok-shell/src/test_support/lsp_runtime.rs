@@ -101,8 +101,6 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
         models_manager: Default::default(),
         file_tool_overrides: None,
         agent_config: None,
-        gcs_bucket_url: None,
-        gcs_upload_method: None,
         hook_registry: None,
         parent_depth: 0,
         subagents_max_depth: xai_grok_tools::implementations::grok_build::task::MAX_SUBAGENT_DEPTH,

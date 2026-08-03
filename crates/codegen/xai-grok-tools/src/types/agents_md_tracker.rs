@@ -205,6 +205,14 @@ impl AgentsMdTracker {
             None => return vec![], // No git repo → no discovery
         };
 
+        // Do not even stat or canonicalize a path in a vendor-owned state
+        // root. This lexical-first gate preserves the narrow `.grok` project
+        // instruction surface and keeps external agent state out of runtime
+        // discovery.
+        if !is_allowed_instruction_path(target_path).await {
+            return vec![];
+        }
+
         // Determine starting directory:
         // - If target is a directory, start from it
         // - If target is a file, start from its parent
@@ -475,6 +483,25 @@ mod tests {
 
         let results = tracker.check_path(&root.join("foo.rs")).await;
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn check_path_rejects_vendor_root_before_walk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vendor_root = tmp.path().join(".claude");
+        let target_dir = vendor_root.join("project");
+        fs::create_dir_all(&target_dir).unwrap();
+        fs::write(vendor_root.join("AGENTS.md"), "vendor instructions").unwrap();
+
+        let mut tracker = AgentsMdTracker::new();
+        tracker.seed(vec![], Some(vendor_root), vec![], None).await;
+
+        assert!(
+            tracker
+                .check_path(&target_dir.join("file.rs"))
+                .await
+                .is_empty()
+        );
     }
 
     #[tokio::test]

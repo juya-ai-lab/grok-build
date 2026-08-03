@@ -1666,21 +1666,6 @@ fn subagent_keeps_default_flavor_when_parent_model_is_non_strict() {
             "a non-strict parent model must leave subagents on the default harness",
         );
 }
-fn test_gcs_context(ctx: &SubagentSpawnContext) -> GcsUploadContext {
-    GcsUploadContext {
-        bucket_url: None,
-        upload_method: None,
-        model_id: None,
-        cwd: None,
-        isolation_mode: None,
-        capability_mode: None,
-        reasoning_effort: None,
-        role_name: None,
-        parent_prompt_id: None,
-        depth: 0,
-        auth_manager: ctx.auth_manager.clone(),
-    }
-}
 #[tokio::test]
 async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
     let mut ctx = ctx_with_toggle(HashMap::new());
@@ -1698,7 +1683,6 @@ async fn cancel_pending_shell_child_presents_one_cancelled_finish() {
             None,
             false,
             42,
-            &test_gcs_context(&ctx),
         )
         .await;
     assert!(matches!(
@@ -1766,7 +1750,6 @@ async fn run_promote_cancel_with_worktree(
             Some(worktree),
             worktree_freshly_created,
             42,
-            &test_gcs_context(&ctx),
         )
         .await;
     assert!(matches!(

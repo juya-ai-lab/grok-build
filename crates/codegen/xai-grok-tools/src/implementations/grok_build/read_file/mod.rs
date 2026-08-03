@@ -352,6 +352,16 @@ pub(crate) async fn run_read_file(
         hints_enabled = res.get::<PathNotFoundHints>().is_some_and(|h| h.0);
     }
     let joined_path = resolve_model_path(&cwd, display_cwd.as_deref(), &input.path);
+    // Reject vendor-owned state before canonicalization or any other filesystem
+    // probe. The shared `.agents/skills` and `.agents/commands` surfaces remain
+    // available through the skill-path validator; other `.agents` surfaces and
+    // proprietary agent roots fail closed.
+    if xai_grok_config::validate_skill_path_lexically(&joined_path).is_none() {
+        return Ok(ReadFileOutput::FileReadError(format!(
+            "Refusing to read vendor-owned path: {}",
+            input.path
+        )));
+    }
     let is_skill_markdown = is_skill_markdown(&joined_path);
     let (path, _unicode_note) = match crate::util::fs::try_canonicalize(&joined_path).await {
         Ok(p) => (p, None),
@@ -363,6 +373,12 @@ pub(crate) async fn run_read_file(
         }
         Err(_) => (joined_path, None),
     };
+    if xai_grok_config::validate_skill_path(&path).is_none() {
+        return Ok(ReadFileOutput::FileReadError(format!(
+            "Refusing to read vendor-owned path: {}",
+            input.path
+        )));
+    }
     let version = ReadFileVersion::from_contract(contract_version);
     let is_legacy = version.is_legacy();
     let skip_gitignore = is_legacy && versions::legacy_0_4_10::allows_gitignored_reads();
@@ -947,6 +963,40 @@ mod tests {
                 assert!(content.raw_output.contains("content"));
             }
             other => panic!("Expected FileContent, got {:?}", other),
+        }
+    }
+    #[tokio::test]
+    async fn read_file_rejects_vendor_state_before_reading() {
+        let tmp = TempDir::new().unwrap();
+        let vendor_dir = tmp.path().join(".cursor");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        std::fs::write(vendor_dir.join("settings.json"), "secret").unwrap();
+
+        let result = run_read_file(
+            ReadFileInput {
+                path: ".cursor/settings.json".to_string(),
+                offset: None,
+                limit: None,
+                pages: None,
+                format: None,
+            },
+            None,
+            None,
+            test_resources(tmp.path()).into_shared(),
+            None,
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+
+        match result {
+            ReadFileOutput::FileReadError(message) => {
+                assert!(
+                    message.contains("vendor-owned"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected vendor path rejection, got {other:?}"),
         }
     }
     #[tokio::test]

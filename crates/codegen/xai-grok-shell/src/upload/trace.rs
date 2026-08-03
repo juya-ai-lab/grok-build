@@ -252,12 +252,12 @@ pub(crate) async fn resolve_git_repo_info(cwd: &str) -> (Option<String>, Option<
 }
 fn classify_workspace(cwd: &str) -> String {
     let path = std::path::Path::new(cwd);
-    if path.ancestors().any(|p| p.join(".git").exists()) {
-        "git".to_owned()
-    } else if xai_file_utils::workspace_classifier::is_project_dir(path) {
-        "project".to_owned()
-    } else {
+    if !xai_file_utils::workspace_classifier::is_project_dir(path) {
         "non_project".to_owned()
+    } else if path.ancestors().any(|p| p.join(".git").exists()) {
+        "git".to_owned()
+    } else {
+        "project".to_owned()
     }
 }
 /// Fill in `repo_root`, `remote_url`, and `workspace_type` on a [`PromptMetadata`].
@@ -332,52 +332,6 @@ pub(crate) async fn upload_metadata(ctx: &PromptTraceContext, metadata: PromptMe
         UploadWait::Confirm,
     )
     .await;
-}
-/// Uploads subagent session metadata to cloud storage as `subagent.json`.
-///
-/// Path format: `{child_session_id}/subagent.json` (session-root, not turn-scoped).
-///
-/// Called at spawn (`status = running`) and again at completion with final
-/// status/duration/tool-calls/turns.
-pub(crate) async fn upload_subagent_metadata(
-    metadata: &crate::agent::subagent::SubagentSessionMetadata,
-    bucket_url: &str,
-    upload_method: crate::session::repo_changes::UploadMethod,
-    auth_manager: std::sync::Arc<crate::auth::AuthManager>,
-) {
-    let json = match serde_json::to_vec_pretty(metadata) {
-        Ok(j) => j,
-        Err(e) => {
-            tracing::warn!(
-                session_id = %metadata.child_session_id,
-                error = %e,
-                "Failed to serialize subagent metadata"
-            );
-            return;
-        }
-    };
-    let gcs_path = format!("{}/subagent.json", metadata.child_session_id);
-    let base_config = crate::session::repo_changes::TraceExportConfig {
-        bucket_url: Some(bucket_url.to_owned()),
-        service_account_key: None,
-        prefix_dir: None,
-        gcs_prefix: None,
-        absolute_paths: false,
-        archive_name_override: None,
-        upload_method,
-    };
-    use crate::upload::gcs::WithAuth as _;
-    let config = base_config.with_auth(Some(auth_manager));
-    if let Err(e) =
-        xai_file_utils::gcs::upload_bytes(&config, &gcs_path, &json, "application/json").await
-    {
-        tracing::warn!(
-            session_id = %metadata.child_session_id,
-            gcs_path = %gcs_path,
-            error = %e,
-            "Failed to upload subagent.json to GCS"
-        );
-    }
 }
 /// Uploads prompt images to cloud storage as standalone files.
 /// Path format: {session_id}/turn_{N}/images/image_{i}.{ext}
@@ -633,9 +587,7 @@ pub(crate) struct SubagentSpawnedRef {
     pub(crate) subagent_id: String,
     pub(crate) child_session_id: String,
     pub(crate) subagent_type: String,
-    /// Human-readable spawn description; see
-    /// [`crate::agent::subagent::SubagentSessionMetadata::description`] for
-    /// why goal-role subagents need it serialized.
+    /// Human-readable spawn description used by local lifecycle references.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) description: String,
     #[serde(skip_serializing_if = "Option::is_none")]

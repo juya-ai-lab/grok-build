@@ -74,6 +74,20 @@ fn resolve(server_name: &str, workspace_root: &Path, raw: &str) -> Option<String
         workspace_root.join(path)
     };
 
+    // `workspaceOpen` values are later sent as file URIs to the LSP process.
+    // Reject vendor-owned state before existence checks or URI construction;
+    // this keeps the existing local LSP feature without handing external-agent
+    // config/session paths to a server.
+    if xai_grok_config::validate_grok_path_lexically(&absolute).is_none()
+        || xai_grok_config::validate_grok_path(&absolute).is_none()
+    {
+        tracing::warn!(
+            server = %server_name,
+            "refusing workspaceOpen path under vendor state"
+        );
+        return None;
+    }
+
     match file_uri(&absolute) {
         Ok(uri) => {
             if !absolute.exists() {
@@ -133,5 +147,11 @@ mod tests {
         // Warns, but the server is still told — we are not the authority on
         // what it can load.
         assert!(resolve("test", root.path(), "Nope.sln").is_some());
+    }
+
+    #[test]
+    fn vendor_paths_are_not_sent_to_lsp() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(resolve("test", root.path(), ".cursor/settings.json").is_none());
     }
 }

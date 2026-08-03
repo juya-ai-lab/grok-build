@@ -3175,7 +3175,8 @@ impl MvpAgent {
     pub(super) fn trace_upload_config_snapshot(
         &self,
     ) -> Option<crate::session::repo_changes::UploadMethod> {
-        if self.is_data_collection_disabled()
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED
+            || self.is_data_collection_disabled()
             || !self.cfg.borrow().is_trace_upload_enabled()
         {
             return None;
@@ -3195,6 +3196,9 @@ impl MvpAgent {
         &self,
     ) -> Option<crate::auth::DiagnosticUploader> {
         self.sync_collection_config_gate();
+        if !xai_grok_config::CONTENT_UPLOADS_ENABLED {
+            return None;
+        }
         let cfg = self.cfg.borrow();
         if !cfg.is_trace_upload_enabled() {
             return None;

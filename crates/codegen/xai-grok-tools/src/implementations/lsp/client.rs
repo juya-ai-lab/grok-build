@@ -170,14 +170,16 @@ async fn spawn_transport(
     }
 }
 
-fn build_initialize_params(config: &LspServerConfig, workspace_root: &Path) -> InitializeParams {
-    let effective_root = config.effective_root(workspace_root);
-    let workspace_uri = Url::from_file_path(effective_root).ok();
+fn build_initialize_params(
+    config: &LspServerConfig,
+    effective_root: Option<&Path>,
+) -> InitializeParams {
+    let workspace_uri = effective_root.and_then(|root| Url::from_file_path(root).ok());
     let workspace_folders = workspace_uri.map(|uri| {
         vec![lsp_types::WorkspaceFolder {
             uri,
             name: effective_root
-                .file_name()
+                .and_then(|root| root.file_name())
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "workspace".to_string()),
         }]
@@ -185,7 +187,7 @@ fn build_initialize_params(config: &LspServerConfig, workspace_root: &Path) -> I
 
     #[allow(deprecated)] // root_uri still needed for older servers
     InitializeParams {
-        root_uri: Url::from_file_path(effective_root).ok(),
+        root_uri: effective_root.and_then(|root| Url::from_file_path(root).ok()),
         workspace_folders,
         capabilities: LspClient::client_capabilities(),
         initialization_options: config.initialization_options.clone(),
@@ -253,7 +255,8 @@ impl LspClient {
         let (main_loop_handle, stderr_task, mut child_process) =
             spawn_transport(&server_name, &config, main_loop).await?;
 
-        let init_params = build_initialize_params(&config, workspace_root);
+        let effective_root = config.validated_effective_root(workspace_root);
+        let init_params = build_initialize_params(&config, effective_root);
 
         let init_result =
             match initialize_with_timeout(&server_name, &config, &mut server, init_params).await {
@@ -283,12 +286,9 @@ impl LspClient {
             .map_err(|e| LspError::InitFailed(format!("initialized notification failed: {e}")))?;
 
         send_initial_configuration(&server_name, &config, &mut server);
-        workspace_open::send(
-            &server_name,
-            &config,
-            config.effective_root(workspace_root),
-            &mut server,
-        );
+        if let Some(effective_root) = effective_root {
+            workspace_open::send(&server_name, &config, effective_root, &mut server);
+        }
 
         tokio::task::yield_now().await;
 

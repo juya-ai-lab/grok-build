@@ -1083,8 +1083,8 @@ impl SessionActor {
 
         let task_tool_name = self.resolve_goal_tool_names().await.task;
         // Tag the planner with the goal-creation turn's prompt id so its
-        // `subagent.json` / parent `subagents_spawned` ref link to this turn,
-        // matching how model-spawned subagents attach to their parent.
+        // parent subagent reference links to this turn, matching how
+        // model-spawned subagents attach to their parent.
         let parent_prompt_id = self
             .current_prompt_id
             .lock()

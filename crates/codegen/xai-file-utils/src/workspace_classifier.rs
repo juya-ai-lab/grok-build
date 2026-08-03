@@ -25,12 +25,12 @@ pub fn is_project_dir(cwd: &Path) -> bool {
         return false;
     }
 
-    if cwd.ancestors().any(|p| p.join(".git").exists()) {
-        return true;
-    }
-
     if has_excluded_component(cwd) {
         return false;
+    }
+
+    if cwd.ancestors().any(|p| p.join(".git").exists()) {
+        return true;
     }
 
     if is_platform_system_dir(cwd) {
@@ -372,6 +372,14 @@ mod tests {
             let sub = tmp.path().join("deep/sub/dir");
             std::fs::create_dir_all(&sub).unwrap();
             assert!(is_project_dir(&sub));
+        }
+
+        #[test]
+        fn vendor_state_does_not_become_project_when_it_contains_git() {
+            let tmp = tempfile::tempdir().unwrap();
+            let vendor = tmp.path().join(".codex").join("sessions");
+            std::fs::create_dir_all(vendor.join(".git")).unwrap();
+            assert!(!is_project_dir(&vendor));
         }
     }
 }

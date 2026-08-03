@@ -316,6 +316,31 @@ impl LspServerConfig {
             .map(std::path::Path::new)
             .unwrap_or(workspace_root)
     }
+
+    /// Return a root only when it remains inside the fork's non-vendor
+    /// filesystem boundary. An invalid configured root falls back to the
+    /// session workspace when that is safe; if both are vendor-owned, LSP is
+    /// initialized without a workspace URI/folder.
+    pub fn validated_effective_root<'a>(
+        &'a self,
+        workspace_root: &'a std::path::Path,
+    ) -> Option<&'a std::path::Path> {
+        let candidate = self.effective_root(workspace_root);
+        if xai_grok_config::validate_grok_path(candidate).is_some() {
+            return Some(candidate);
+        }
+        if xai_grok_config::validate_grok_path(workspace_root).is_some() {
+            tracing::warn!(
+                "refusing LSP workspace folder under vendor state; using session workspace"
+            );
+            Some(workspace_root)
+        } else {
+            tracing::warn!(
+                "refusing LSP workspace folder under vendor state; no safe workspace available"
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -374,6 +399,19 @@ mod tests {
         symlink(target, &alias).unwrap();
 
         assert!(load_file(&alias).is_empty());
+    }
+
+    #[test]
+    fn vendor_roots_do_not_fall_back_to_another_vendor_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let configured = tmp.path().join(".cursor");
+        let session = tmp.path().join(".claude");
+        let config = LspServerConfig {
+            workspace_folder: Some(configured.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        assert!(config.validated_effective_root(&session).is_none());
     }
 
     #[test]
