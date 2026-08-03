@@ -3607,7 +3607,7 @@ pub(crate) fn resolve_model_list(
                     )
                 })
                 .collect();
-        for entry in resolved.values_mut() {
+        for (key, entry) in resolved.iter_mut() {
             if let Some((donor_cw, donor_backend)) = donors.get(&entry.info.model) {
                 if entry.info.context_window.get() == default_cw {
                     tracing::debug!(
@@ -3618,7 +3618,20 @@ pub(crate) fn resolve_model_list(
                     );
                     entry.info.context_window = *donor_cw;
                 }
-                if entry.info.api_backend == ApiBackend::default()
+                // The resolved enum cannot distinguish an explicit
+                // chat_completions from an omitted backend. Preserve the
+                // user's per-entry value before applying slug inheritance.
+                let backend_is_explicit =
+                    cfg.config_models.get(key).is_some_and(|model_override| {
+                        model_override.api_backend.is_some()
+                            || model_override
+                                .model_provider
+                                .as_deref()
+                                .and_then(|provider_id| cfg.model_providers.get(provider_id))
+                                .is_some_and(|provider| provider.api_backend.is_some())
+                    });
+                if !backend_is_explicit
+                    && entry.info.api_backend == ApiBackend::default()
                     && *donor_backend != ApiBackend::default()
                 {
                     entry.info.api_backend.clone_from(donor_backend);
@@ -11914,6 +11927,87 @@ default = "grok-4.5"
             ApiBackend::Responses,
             "api_backend should be inherited from sibling"
         );
+    }
+    #[test]
+    fn slug_propagation_respects_explicit_api_backend_for_same_model_slug() {
+        let raw = r#"
+            [model.provider-a]
+            model = "shared-model"
+            base_url = "https://a.example/v1"
+            api_key = "key-a"
+            context_window = 300000
+            api_backend = "responses"
+
+            [model.provider-b]
+            model = "shared-model"
+            base_url = "https://b.example/v1"
+            api_key = "key-b"
+            context_window = 300000
+            api_backend = "chat_completions"
+
+            [model.provider-c]
+            model = "shared-model"
+            base_url = "https://c.example/v1"
+            api_key = "key-c"
+            context_window = 300000
+            api_backend = "responses"
+        "#;
+        let (_, models) = resolve_models_from_toml(raw, None);
+
+        let provider_a = models.get("provider-a").expect("provider-a exists");
+        let provider_b = models.get("provider-b").expect("provider-b exists");
+        let provider_c = models.get("provider-c").expect("provider-c exists");
+
+        assert_eq!(provider_a.info.api_backend, ApiBackend::Responses);
+        assert_eq!(
+            provider_b.info.api_backend,
+            ApiBackend::ChatCompletions,
+            "explicit chat_completions must not inherit a Responses sibling"
+        );
+        assert_eq!(provider_c.info.api_backend, ApiBackend::Responses);
+        assert_eq!(provider_b.info.base_url, "https://b.example/v1");
+        assert_eq!(provider_b.api_key.as_deref(), Some("key-b"));
+
+        let sampling = resolve_sampling(provider_b, None);
+        assert_eq!(sampling.api_backend, ApiBackend::ChatCompletions);
+        assert_eq!(sampling.base_url, "https://b.example/v1");
+        assert_eq!(sampling.api_key.as_deref(), Some("key-b"));
+    }
+    #[test]
+    fn slug_propagation_respects_explicit_provider_api_backend_for_same_model_slug() {
+        let raw = r#"
+            [model_providers.chat-gateway]
+            base_url = "https://chat.example/v1"
+            api_key = "provider-key"
+            api_backend = "chat_completions"
+
+            [model.provider-chat]
+            model = "shared-model"
+            model_provider = "chat-gateway"
+            context_window = 300000
+
+            [model.provider-responses]
+            model = "shared-model"
+            base_url = "https://responses.example/v1"
+            api_key = "responses-key"
+            context_window = 300000
+            api_backend = "responses"
+        "#;
+        let (_, models) = resolve_models_from_toml(raw, None);
+
+        let provider_chat = models.get("provider-chat").expect("provider-chat exists");
+        assert_eq!(
+            provider_chat.info.api_backend,
+            ApiBackend::ChatCompletions,
+            "explicit provider chat_completions must not inherit a Responses sibling"
+        );
+        assert_eq!(provider_chat.info.base_url, "https://chat.example/v1");
+        assert_eq!(provider_chat.api_key.as_deref(), Some("provider-key"));
+
+        let sampling = resolve_sampling(provider_chat, None);
+        assert_eq!(sampling.api_backend, ApiBackend::ChatCompletions);
+        assert_eq!(sampling.base_url, "https://chat.example/v1");
+        assert_eq!(sampling.api_key.as_deref(), Some("provider-key"));
     }
     /// When the prefetched entry has an explicitly-set context_window
     /// (not the 256k default), slug propagation must NOT overwrite it.

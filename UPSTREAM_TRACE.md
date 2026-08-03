@@ -170,6 +170,7 @@
 | `bfa46df8` | README 增加 npm/pnpm 全局安装说明 | 文档：配合 npm 分发 |
 | `5aa77501` | 建立脚本驱动的上游 trace 机制：`scripts/upstream-trace.sh` 生成机械事实 + CI 自动刷新回提交 + 决策记录覆盖校验（`--check`）+ `.grok/skills/upstream-trace` 固化流程 + AGENTS.md 规则 | 宗旨 3：决策留痕、机械事实不靠人记；CI 接管刷新与校验 |
 | `a26df1c1` | 修复覆盖校验对短 SHA 长度的依赖：改按完整 SHA 前缀匹配（`%h` 长度随仓库对象数变化，CI 与本地不一致会误报）；生成区统一 8 位显示 | 机制健壮性：跨环境可复现 |
+| `fix: preserve per-entry api_backend for duplicate model slugs` | 修复同一实际 model slug 下显式 `api_backend` 被 sibling propagation 覆盖的问题，并覆盖 `[model.*]` 与 `[model_providers.*]` 两种配置来源 | JUYA-ISSUE-001；保持显式 provider 路由独立，同时保留未显式配置 backend 的兼容继承行为 |
 
 ### 上游同步记录（未来在此追加）
 
