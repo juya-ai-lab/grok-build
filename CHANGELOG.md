@@ -12,6 +12,7 @@
 
 - 已从上游候选 `0.2.119`（`xai-org/grok-build@e5478eff`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`）分批同步后台任务输出、nested checkout watcher、同分支 git-head 去重和子代理 watcher 覆盖判断；本 fork 对应主线提交为 `571c2d64`、`2d4eb18c`、`6c0f40d7`、`0d72ccd7`。
 - 隐私审查批次 `2d9fbbde` 直接删除子代理配置/目录/凭据诊断日志、GCS 元数据和 prompt/permission/turn trace 上传构造，并加固 read-file、AGENTS tracker、LSP 与 workspace classifier 的 vendor-state 边界；本地 resume、推理、worktree 生命周期仍保留。
+- 认证批次 `8eb35738` 修复过期凭据上的交互式 external auth provider 误收到 headless 标记的问题，并释放嵌套 auth 流程前的文件锁；headless refresh 仍保留其专用标记。
 - 保留 fork 的 web-search 兼容修复：流式 `action`/`query` 可缺省，并支持 DeepSeek 复数 `queries`；`async-openai` 继续 pin 到 fork revision `7defed8a`。
 - 版本号、`SOURCE_REV`、release/tag 和最终产物验证仍待完整上游 diff 审计完成后单独处理。
 

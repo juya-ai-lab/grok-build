@@ -236,6 +236,7 @@
 | `4f44478f` | 记录 B2-W、B2-GH 的实现、测试和隐私裁剪证据；不改变运行时行为 | 宗旨 3：让每个选择性上游批次的证据可追溯 |
 | `10bb1a81` | 记录 B2-SW 的实现、测试和隐私裁剪证据；不改变运行时行为 | 宗旨 3：让每个选择性上游批次的证据可追溯 |
 | `2d9fbbde` | 直接删除子代理 GCS `subagent.json` 元数据、prompt/permission/turn trace、配置/目录/凭据诊断日志及其上传上下文；保留本地 resume、推理、worktree 生命周期和 watcher 功能；同时为 read-file、AGENTS tracker、LSP workspace-open/root、workspace classifier 增加 vendor-state lexical/full validation，禁止外部 agent 状态进入本地功能边界或外发构造 | 上游 0.2.119 隐私批次；对应隐私工作树提交 `4d2a704d`；`cargo fmt --all -- --check`、`git diff --check`、`xai-grok-shell`/`xai-grok-tools` 检查与定向回归通过；web-search `action`/`query`/`queries` 保护另行核对且未被覆盖 |
+| `8eb35738` | 仅移植 external auth 的两个本地行为修复：交互式 provider 不再收到 headless `GROK_AUTH_EXPIRED=1`，以及调用 `AuthManager::auth()` 前释放同一 auth 文件锁避免嵌套 flock 自阻塞；保留 headless refresh 路径的标记和现有 team/principal pin、凭据持久化流程 | 上游 0.2.119 认证批次；无新增外部 agent 配置读取、上传、relay 或遥测字段；新增交互式 provider 两项测试，另验证 headless refresh 标记测试通过；provider 既有环境继承能力作为后续隐私审计项，不在本批扩大范围 |
 | `1d71aab7` | 更新 fork-level `CHANGELOG.md`，记录上游 0.2.119 分批同步、隐私批次、web-search 兼容保护及尚未处理的版本/tag/产物验证状态；不改变运行时行为 | 宗旨 3：让使用者可读摘要与维护者 trace 同步；上游同步仍未完成，版本与 `SOURCE_REV` 暂不更新 |
 | ddbee923 | docs: record incremental upstream batch；刷新生成式 trace 区块并记录 B1 的独立合入、测试和隐私结论 | 宗旨 3：上游分批决策和验证证据可追溯；不改变运行时行为 |
 
