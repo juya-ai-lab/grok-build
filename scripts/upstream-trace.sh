@@ -8,9 +8,11 @@
 #       Judgement content (rationale, trim notes) lives in the manual sections
 #       and is never touched.
 #   --check           — read-only: verify every commit in the fork change log
-#       has a matching entry in the manual「决策记录」section (matched by short
-#       SHA or full subject). CI-mechanical commits (chore: ... trace) are
-#       exempt. Exit 1 when coverage is incomplete.
+#       has a matching entry in the manual「决策记录」section. A commit is
+#       covered when the section contains a backticked token that is a prefix
+#       of its full SHA (short-SHA lengths vary between clones), or its full
+#       subject. CI-mechanical commits (chore: ... trace) are exempt.
+#       Exit 1 when coverage is incomplete.
 #   --fetch           — git fetch upstream --prune before doing anything.
 #
 # Usage:
@@ -45,11 +47,11 @@ if ! git rev-parse --verify -q "$UP" >/dev/null 2>&1; then
 fi
 
 # --- facts (shared by both modes) ---
-local_head="$(git rev-parse --short HEAD)"
+local_head_full="$(git rev-parse HEAD)"
 local_date="$(git log -1 --format=%cs)"
 src_rev="$(cat SOURCE_REV)"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$VERSION_CRATE")"
-up_head="$(git rev-parse --short "$UP")"
+up_head_full="$(git rev-parse "$UP")"
 up_date="$(git log -1 --format=%cs "$UP")"
 up_subject="$(git log -1 --format=%s "$UP")"
 up_src_rev="$(git show "$UP":SOURCE_REV 2>/dev/null || echo n/a)"
@@ -66,6 +68,7 @@ fi
 if (( check )); then
   coverage="$(awk 'found{print} /^## 决策记录/{found=1}' "$TRACE")"
   [ -n "$coverage" ] || { echo "错误: 在 $TRACE 中找不到「决策记录」小节" >&2; exit 2; }
+  tokens="$(printf '%s\n' "$coverage" | grep -o '`[^`]*`' | tr -d '`' || true)"
   total=0
   missing=0
   while IFS='|' read -r h d s; do
@@ -73,12 +76,16 @@ if (( check )); then
     case "$s" in
       "chore: refresh upstream trace"* | "chore: update upstream trace"*) continue ;;
     esac
-    if grep -qF "\`$h\`" <<<"$coverage" || grep -qF "$s" <<<"$coverage"; then
-      continue
+    covered=0
+    while read -r tok; do
+      [ -z "$tok" ] && continue
+      case "$h" in "$tok"*) covered=1; break ;; esac
+    done <<<"$tokens"
+    if [ "$covered" -eq 0 ] && ! grep -qF "$s" <<<"$coverage"; then
+      echo "缺少决策记录: ${h:0:8}  $s" >&2
+      missing=1
     fi
-    echo "缺少决策记录: $h  $s" >&2
-    missing=1
-  done < <(git log --format='%h|%cs|%s' "$UP..HEAD")
+  done < <(git log --format='%H|%cs|%s' "$UP..HEAD")
   if (( missing )); then
     echo "请在 $TRACE「决策记录」为上述提交补充一行（提交 / 原因 / 对应宗旨）" >&2
     exit 1
@@ -89,10 +96,10 @@ fi
 
 # --- refresh mode: build blocks ---
 status_block=$(cat <<EOF
-- 本地 HEAD: ${local_head} (${local_date})
+- 本地 HEAD: ${local_head_full:0:8} (${local_date})
 - 版本: ${version}
 - 上游基线 SOURCE_REV: ${src_rev}
-- 上游 ${UP}: ${up_head} (${up_date}, ${up_subject})
+- 上游 ${UP}: ${up_head_full:0:8} (${up_date}, ${up_subject})
 - 上游 SOURCE_REV: ${up_src_rev}
 - 落后上游 ${up_behind} 提交 / 本 fork 领先 ${up_ahead} 提交; 树差异 ${diff_files} 个文件
 - 判定: ${verdict}
@@ -107,8 +114,8 @@ EOF
 while IFS='|' read -r h d s; do
   rev="$(git show "$h":SOURCE_REV 2>/dev/null || echo n/a)"
   sync_block+="
-| ${h} | ${d} | ${s} | ${rev} |"
-done < <(git log --format='%h|%cs|%s' "$UP")
+| ${h:0:8} | ${d} | ${s} | ${rev} |"
+done < <(git log --format='%H|%cs|%s' "$UP")
 
 fork_block=$(cat <<EOF
 | 提交 | 日期 | 内容 |
@@ -117,8 +124,8 @@ EOF
 )
 while IFS='|' read -r h d s; do
   fork_block+="
-| ${h} | ${d} | ${s} |"
-done < <(git log --format='%h|%cs|%s' "$UP..HEAD")
+| ${h:0:8} | ${d} | ${s} |"
+done < <(git log --format='%H|%cs|%s' "$UP..HEAD")
 
 # --- replace the marked blocks in-place (idempotent) ---
 replace_block() {
