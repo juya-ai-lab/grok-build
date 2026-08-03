@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 037b8140 (2026-08-04)
+- 本地 HEAD: c06d7525 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 落后上游 0 提交 / 本 fork 领先 80 提交; 树差异 164 个文件
+- 落后上游 0 提交 / 本 fork 领先 82 提交; 树差异 164 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 164 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -59,6 +59,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| c06d7525 | 2026-08-04 | docs: separate npm package artifact choice |
+| 45ecce9f | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 037b8140 | 2026-08-04 | docs: default npm package in artifact checklist |
 | aaf80936 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | a0fd99af | 2026-08-04 | docs: list selectable artifact variants in issue template |
@@ -193,7 +195,7 @@
 | `8a5805cc` | 将产物勾选收敛为“直接平台产物”和 npm package 两个用户可见类别；保留平台/架构文本字段，不再细分 npm 与 pnpm | 宗旨 3：分类足够定位问题，同时避免模板过度细化 |
 | `a0fd99af` | 将六个 release 平台二进制恢复为直接可勾选项，npm/pnpm 仍合并为一个 npm package 选项；特殊产物继续通过 Other 和正文补充 | 宗旨 3：让常见产物可直接归类，同时保留非产物和特殊情况入口 |
 | `037b8140` | 考虑 npm wrapper 通常分发或调用同一平台产物，将 npm package 设为默认勾选；模板同时要求在明确不涉及时取消，避免把默认推断当成事实 | 宗旨 3：按实际影响链提高默认覆盖率，同时保留准确修正入口 |
-| `docs: separate npm package artifact choice` | 将 npm package 独立为单独小节并取消默认勾选；只有报告者确认受影响时才选择，避免模板预设替代调查结论 | 宗旨 3：产物范围记录保持准确、可复核 |
+| `c06d7525` | 将 npm package 独立为单独小节并取消默认勾选；只有报告者确认受影响时才选择，避免模板预设替代调查结论 | 宗旨 3：产物范围记录保持准确、可复核 |
 
 ### 上游同步记录（未来在此追加）
 
