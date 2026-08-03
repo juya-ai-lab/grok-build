@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 571c2d64 (2026-08-04)
+- 本地 HEAD: ddbee923 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 1 提交 / 本 fork 领先 96 提交; 树差异 223 个文件
+- 落后上游 1 提交 / 本 fork 领先 97 提交; 树差异 223 个文件
 - 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,7 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| ddbee923 | 2026-08-04 | docs: record incremental upstream batch |
 | 571c2d64 | 2026-08-04 | fix: show full size for partial task output |
 | 9ee5aeec | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 1b38e1d3 | 2026-08-04 | docs: record pending upstream privacy audit |
@@ -220,6 +221,7 @@
 | `1b38e1d3` | 记录上游 `0.2.119` 候选的 `e5478eff` / `SOURCE_REV=27d2088a`，明确其尚未完成全量隐私审计，暂不视为已同步 | 宗旨 1（隐私边界编译级）+ 宗旨 3（同步状态可追溯） |
 
 | 571c2d64 | fix: show full size for partial task output；从上游 0.2.119 候选选择性移植后台任务部分日志的真实总大小提示，仅改 xai-grok-tools 输出格式和测试；不更新版本号或 SOURCE_REV | B1 低风险独立批次：无新增外部通信、遥测、持久化、路径扫描或凭证读取；模型额外看到完整输出字节数，已通过 fmt、针对性测试和 xai-grok-tools 全量 lib 回归；其余 0.2.119 改动仍待全量隐私审计 |
+| ddbee923 | docs: record incremental upstream batch；刷新生成式 trace 区块并记录 B1 的独立合入、测试和隐私结论 | 宗旨 3：上游分批决策和验证证据可追溯；不改变运行时行为 |
 
 ### 上游同步记录（未来在此追加）
 
