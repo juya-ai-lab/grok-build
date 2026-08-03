@@ -6,6 +6,15 @@
 - 上游同步条目固定记录：上游版本/tag、上游 commit、`SOURCE_REV`、本 fork 同步 commit，以及隐私裁剪或冲突处理结论。
 - `UPSTREAM_TRACE.md` 保存更详细的同步事实和维护决策；本文件只保留使用者需要的摘要。
 
+## [Unreleased] — 2026-08-04
+
+### Upstream 0.2.119 incremental sync
+
+- 已从上游候选 `0.2.119`（`xai-org/grok-build@e5478eff`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`）分批同步后台任务输出、nested checkout watcher、同分支 git-head 去重和子代理 watcher 覆盖判断；本 fork 对应主线提交为 `571c2d64`、`2d4eb18c`、`6c0f40d7`、`0d72ccd7`。
+- 隐私审查批次 `2d9fbbde` 直接删除子代理配置/目录/凭据诊断日志、GCS 元数据和 prompt/permission/turn trace 上传构造，并加固 read-file、AGENTS tracker、LSP 与 workspace classifier 的 vendor-state 边界；本地 resume、推理、worktree 生命周期仍保留。
+- 保留 fork 的 web-search 兼容修复：流式 `action`/`query` 可缺省，并支持 DeepSeek 复数 `queries`；`async-openai` 继续 pin 到 fork revision `7defed8a`。
+- 版本号、`SOURCE_REV`、release/tag 和最终产物验证仍待完整上游 diff 审计完成后单独处理。
+
 ## [v0.2.118-fix1] — 2026-08-04
 
 > 本 fork 修复 tag。当前源码已验证，但实际发行二进制和 npm/pnpm 产物仍待 smoke test；详见 [Issue #3](https://github.com/juya-ai-lab/grok-build/issues/3)。
