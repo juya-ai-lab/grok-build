@@ -71,7 +71,11 @@ npm install -g @juya-ai-lab/grok-build
 pnpm add -g @juya-ai-lab/grok-build
 ```
 
-需要固定版本时，在包名后追加版本号，例如 `@juya-ai-lab/grok-build@0.2.118-fix1`。
+npm 的可用版本以 registry 中已发布的版本为准；GitHub tag 不等同于已发布的 npm 版本。需要固定版本时，在包名后追加已发布版本号，例如：
+
+```sh
+npm install -g @juya-ai-lab/grok-build@0.2.118
+```
 
 ## Building from source
 

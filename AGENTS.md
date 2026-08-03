@@ -53,7 +53,7 @@
 
 - 仓库记录干净：测试不留 tag / 分支 / run 痕迹，测试后清理。
 - Rust 代码改动后：先对受影响 crate 运行 cargo fmt --package <package> -- --check；发现格式差异先格式化，再运行定向测试；不要格式化无关文件。
-- GitHub issue 记录：使用 `.github/ISSUE_TEMPLATE/bug-report.md`，明确 scope（upstream-originated / fork-specific / both），并分别记录上游与本 fork 的版本、commit 链接和验证状态。
+- GitHub issue 记录：按适用的 `.github/ISSUE_TEMPLATE/` 模板填写，保留问题范围、上游与本 fork 的版本/commit 来源及验证状态；安全问题遵循 `SECURITY.md`。
 - 上游同步或本地改动后，更新 `UPSTREAM_TRACE.md`：机械事实（当前状态/同步日志/改动日志）由 `scripts/upstream-trace.sh` 生成、push 到 main 后 CI 自动刷新；人工职责是判断性内容——「决策记录」（原因/裁剪说明）与临时事项（async-openai 镜像、token 到期等）。完整流程见 `.grok/skills/upstream-trace`。
 - 外部写操作（推送、删 tag、发布 release）先确认目标仓库与分支。
 - commit message 用英文、规范，一个提交一个主题。
