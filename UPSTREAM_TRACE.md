@@ -190,7 +190,7 @@
 
 本节用于上下文压缩或协作者交接时快速恢复现场；根目录文档和 Git 事实优先于旧的临时笔记。
 
-- 当前分支：`codex/upstream-0.2.119-step1-output-size`；当前 HEAD：`981c63b8641cd227a55736bfa2128a3722f8fd43`（`chore: refresh upstream trace [skip ci]`）；记录时工作树干净。
+- 当前分支：`codex/upstream-0.2.119-step1-output-size`；选择性同步阶段锚点：`981c63b8641cd227a55736bfa2128a3722f8fd43`（`chore: refresh upstream trace [skip ci]`）。随后仅产生本快照文档提交 `7c33fa07` 和机械刷新提交 `e8f23431`；当前工作树干净。
 - 上游候选：`upstream/main=e5478eff1e4050558e12e1328b85e6616632efb6`，上游版本 `0.2.119`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`；本 fork 仍为版本 `0.2.118`、`SOURCE_REV=64c4de99cc822b25ce9c54ab5a4f372093d0885d`。
 - 已选择性合入：`571c2d64`（partial task output 的真实总大小）、`2d4eb18c`（nested checkout watcher）、`6c0f40d7`（commit-aware git-head dedup）、`0d72ccd7`（复用 subagent watcher 覆盖范围）、`2d9fbbde`（删除带路径/提示词/配置/凭证的 subagent 上传链并加 vendor-state 边界）、`8eb35738`（interactive auth 修复）、`19548365`（兼容 legacy unknown workspace methods）。
 - 已保护并验证 fork 既有改动：`040e3044` 仍为祖先；`async-openai@7defed8` pin 保留，web-search 的可选 `action`/`query` 与 DeepSeek 复数 `queries` 处理保留；`.agents/skills`、`.agents/commands`、OAuth 和正常推理路径保留；上游新增 `SkillTrigger`/`skill_md_read` 外部遥测未进入当前代码。
