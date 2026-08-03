@@ -22,6 +22,7 @@ headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
 [Installing a prebuilt release](#installing-a-prebuilt-release) ·
+[Changelog](CHANGELOG.md) ·
 [Building from source](#building-from-source) ·
 [Documentation](#documentation) ·
 [Repository layout](#repository-layout) ·

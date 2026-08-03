@@ -202,6 +202,7 @@
 | `c06d7525` | 将 npm package 独立为单独小节并取消默认勾选；只有报告者确认受影响时才选择，避免模板预设替代调查结论 | 宗旨 3：产物范围记录保持准确、可复核 |
 | `0b2c7c89` | 按最终分类约定移除 npm package 产物 checkbox，改为独立说明和正文补充项；直接平台产物列表保持可勾选 | 宗旨 3：产物分类保持简洁，npm 使用细节仍可追溯 |
 | `00e900c7` | 增加 `upstream-originated`、`upstream-conflict`、`fork-specific` 和 `needs-artifact-validation` 标签定义；模板仅默认通用 `bug`，scope/status 标签由维护者按证据添加 | 宗旨 3：让问题来源、fork/上游冲突和产物验证状态可筛选且不被模板预设误导 |
+| `docs: add fork changelog with upstream provenance` | 新增根目录 fork-level `CHANGELOG.md`，面向使用者记录修复/分发变更，并要求上游条目同时写明版本、commit、`SOURCE_REV` 和本 fork 同步 commit；详细证据仍集中在 `UPSTREAM_TRACE.md` | 宗旨 3：使用者可读的变更摘要与维护者追踪记录分层，避免把 fork 变更误写成上游变更 |
 
 ### 上游同步记录（未来在此追加）
 
