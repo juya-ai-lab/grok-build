@@ -16,6 +16,22 @@ and validation status separately. The GitHub issue is the canonical record;
 keep it open until the stated artifact-level validation and other close
 criteria are complete.
 
+## Issue labels
+
+The bug template applies the existing `bug` label. Maintainers add scope and
+status labels after checking the evidence:
+
+| Label | Use when |
+|---|---|
+| `upstream-originated` | The issue reproduces in an upstream version or baseline and its root cause is upstream-originated. |
+| `upstream-conflict` | Fork behavior or integration conflicts with upstream behavior or changes; this requires an actual divergence or merge/integration conflict, not merely an upstream bug also present in the fork. |
+| `fork-specific` | Only this fork's changes, privacy trims, or release process are affected. |
+| `needs-artifact-validation` | Source checks pass, but a released or packaged artifact still needs validation. |
+
+`upstream-originated` and `upstream-conflict` describe different evidence and
+must not be used interchangeably. A scope label can be combined with the
+artifact-validation status label.
+
 ## Security reports
 
 Please report security issues through the process described in

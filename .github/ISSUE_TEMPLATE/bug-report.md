@@ -2,9 +2,11 @@
 name: Bug report / compatibility issue
 about: Report a reproducible bug and identify whether it belongs to upstream or this fork
 title: "[Bug] "
-labels: ""
+labels: "bug"
 assignees: ""
 ---
+
+<!-- Maintainers: apply scope and status labels after reviewing the evidence; see CONTRIBUTING.md. -->
 
 ## Scope / 问题归属
 
