@@ -46,6 +46,7 @@ use tokio::sync::mpsc;
 
 const DEBOUNCE_MS: u64 = 100;
 
+use crate::checkout::is_another_workspace;
 use crate::event::FsEventKind;
 
 /// Proprietary foreign-agent state is never part of a Grok workspace watch.
@@ -652,6 +653,14 @@ fn scan_per_dir_updates(
         } else {
             pruned.push(p.clone());
         }
+        // `git worktree add` writes the marker last, so a directory can become
+        // another workspace after selection accepted it.
+        if (dir_named(p, ".git") || dir_named(p, ".sl"))
+            && let Some(parent) = p.parent()
+            && should_skip(parent)
+        {
+            pruned.push(parent.to_path_buf());
+        }
     }
 }
 
@@ -817,6 +826,21 @@ fn select_top_level_watch_dirs_with_policy(
     .unwrap_or_default()
 }
 
+/// What selection refuses to descend into. Never asked about the session
+/// root, which is a checkout by definition.
+fn should_skip(dir: &Path) -> bool {
+    dir_named(dir, ".git") || dir_named(dir, ".sl") || is_another_workspace(dir)
+}
+
+/// [`should_skip`] applied to `dir` and to every directory between it and
+/// `root`. `git worktree add` writes its marker last, so a directory can be
+/// queued as an add before the checkout above it is recognizable.
+fn should_skip_below(root: &Path, dir: &Path) -> bool {
+    dir.ancestors()
+        .take_while(|d| *d != root && d.starts_with(root))
+        .any(should_skip)
+}
+
 /// Like [`select_top_level_watch_dirs`] but returns `None` once the non-ignored
 /// count exceeds `max`, stopping the walk early.
 ///
@@ -860,9 +884,8 @@ fn select_top_level_watch_dirs_capped_with_policy(
         if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
             continue;
         }
-        // `.git`/`.sl` are watched separately (non-recursively for `.sl`),
-        // never as recursive workspace children.
-        if dir_named(path, ".git") || dir_named(path, ".sl") {
+        // Fan-out arms a recursive child watch, so there is no deeper prune.
+        if should_skip(path) {
             continue;
         }
         if passes_custom_globs(path, custom_ignore, custom_include) {
@@ -875,10 +898,8 @@ fn select_top_level_watch_dirs_capped_with_policy(
     Some(dirs)
 }
 
-/// Ignore-aware walker that also **prunes descent** into `.git`/`.sl` named
-/// dirs and custom-ignored dirs (gitignore pruning comes from the `ignore`
-/// crate itself). Used by per-dir selection and incremental subtree adds so
-/// both apply identical semantics at every depth. Never follows symlinks.
+/// Ignore-aware walker that also prunes descent into anything
+/// [`should_skip`] refuses. Never follows symlinks.
 fn pruning_walker(
     root: &Path,
     custom_ignore: &Option<GlobSet>,
@@ -896,6 +917,7 @@ fn pruning_walker(
     let custom_ignore = custom_ignore.clone();
     let custom_include = custom_include.clone();
     let vendor_policy = vendor_policy.clone();
+    let walker_root = root.to_path_buf();
     walker.filter_entry(move |entry| {
         // This check intentionally precedes file_type(): explicit vendor names
         // are pruned without a metadata probe or read_dir descent.
@@ -906,8 +928,8 @@ fn pruning_walker(
             return true; // Files pass here; callers filter them separately.
         }
         let path = entry.path();
-        if dir_named(path, ".git") || dir_named(path, ".sl") {
-            return false; // VCS metadata is watched separately (or not at all).
+        if path != walker_root && should_skip(path) {
+            return false;
         }
         passes_custom_globs(path, &custom_ignore, &custom_include)
     });
@@ -1117,6 +1139,7 @@ fn arm_pending_chunk(
 fn add_subtree_watches(
     debouncer: &mut Debouncer<notify::RecommendedWatcher, NoCache>,
     watched: &mut HashSet<PathBuf>,
+    watch_root: &Path,
     subtree_root: &Path,
     custom_ignore: &Option<GlobSet>,
     custom_include: &Option<GlobSet>,
@@ -1141,6 +1164,10 @@ fn add_subtree_watches(
     // events *inside* a watched-but-stale subtree re-candidate their parent
     // anyway, so skipping here never strands a genuinely new dir.
     if watched.contains(subtree_root) {
+        return;
+    }
+    if should_skip_below(watch_root, subtree_root) {
+        tracing::debug!("fs_notify: not descending into {subtree_root:?}");
         return;
     }
     let mut backfill: Vec<PathBuf> = Vec::new();
@@ -1621,6 +1648,7 @@ pub(crate) fn start_with_timeout(
                                         add_subtree_watches(
                                             debouncer,
                                             watched_dirs,
+                                            &watch_path,
                                             a,
                                             &custom_ignore,
                                             &custom_include,
@@ -3550,6 +3578,52 @@ mod tests {
         }
 
         #[test]
+        fn excludes_top_level_checkouts() {
+            let temp = TempDir::new().unwrap();
+            let root = temp.path();
+            fs::create_dir_all(root.join(".git")).unwrap();
+            fs::create_dir_all(root.join("src")).unwrap();
+            fs::create_dir_all(root.join("vendored/.git")).unwrap();
+            let worktree = root.join("feature");
+            fs::create_dir_all(&worktree).unwrap();
+            fs::write(worktree.join(".git"), "gitdir: /repo/.git/worktrees/x\n").unwrap();
+
+            let dirs = select_top_level_watch_dirs(root, &None, &None);
+
+            assert!(contains_name(&dirs, "src"));
+            assert!(
+                !contains_name(&dirs, "vendored"),
+                "a nested clone belongs to another workspace: {dirs:?}"
+            );
+            assert!(
+                !contains_name(&dirs, "feature"),
+                "a linked worktree belongs to another workspace: {dirs:?}"
+            );
+        }
+
+        #[test]
+        fn per_dir_selection_prunes_nested_checkouts_but_keeps_normal_dirs() {
+            let temp = TempDir::new().unwrap();
+            let root = temp.path();
+            fs::create_dir_all(root.join(".git")).unwrap();
+            fs::create_dir_all(root.join("src/module")).unwrap();
+            fs::create_dir_all(root.join(".harness/worktrees/feature/src")).unwrap();
+            fs::write(
+                root.join(".harness/worktrees/feature/.git"),
+                "gitdir: /repo/.git/worktrees/feature\n",
+            )
+            .unwrap();
+
+            let dirs = select_per_dir_watch_dirs(root, &None, &None);
+
+            assert!(dirs.iter().any(|dir| dir.ends_with("src/module")));
+            assert!(
+                dirs.iter()
+                    .all(|dir| { !dir.starts_with(root.join(".harness/worktrees/feature")) })
+            );
+        }
+
+        #[test]
         fn excludes_git_directory() {
             let temp = TempDir::new().unwrap();
             let root = temp.path();
@@ -4057,7 +4131,7 @@ mod tests {
             let paths = [
                 root.join(".claude/secret"),
                 root.join("nested/.codex/secret"),
-                root.join(".agents/secret"),
+                root.join(".cursor/secret"),
                 root.join(".claude.json"),
                 root.join("nested/.claude.json/secret"),
             ];
@@ -4074,6 +4148,28 @@ mod tests {
 
             assert!(pruned.is_empty(), "blocked paths must not be classified");
             assert!(added.is_empty(), "blocked paths must not be classified");
+        }
+
+        #[test]
+        fn scan_updates_prunes_a_directory_that_became_another_workspace() {
+            let temp = TempDir::new().unwrap();
+            let cloned = temp.path().join("cloned");
+            fs::create_dir_all(cloned.join(".git")).unwrap();
+
+            let mut pruned = Vec::new();
+            let mut added = Vec::new();
+            scan_per_dir_updates(
+                FsEventKind::Created,
+                &[cloned.join(".git")],
+                &mut pruned,
+                &mut added,
+                &VendorPathPolicy::default(),
+            );
+
+            assert!(
+                pruned.contains(&cloned),
+                "the marker's parent joins the prune list: {pruned:?}"
+            );
         }
 
         /// FSEvents can coalesce a subtree removal into `Modified` on the
@@ -4219,7 +4315,7 @@ mod tests {
             for blocked in [
                 temp.path().join(".claude/missing"),
                 temp.path().join("nested/.codex/missing"),
-                temp.path().join(".agents"),
+                temp.path().join(".cursor"),
                 temp.path().join(".claude.json"),
                 temp.path().join("nested/.claude.json/missing"),
             ] {
@@ -4231,7 +4327,7 @@ mod tests {
 
             for allowed in [
                 temp.path().join(".grok"),
-                temp.path().join(".cursor"),
+                temp.path().join(".agents"),
                 temp.path().join(".claude.json.bak"),
             ] {
                 assert_eq!(
