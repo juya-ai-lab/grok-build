@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 9c28ecd5 (2026-08-04)
+- 本地 HEAD: 125c8b1c (2026-08-04)
 - 版本: 0.2.119
 - 上游基线 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 0 提交 / 本 fork 领先 125 提交; 树差异 183 个文件
+- 落后上游 0 提交 / 本 fork 领先 126 提交; 树差异 183 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 183 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,7 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 125c8b1c | 2026-08-04 | chore: refresh upstream trace |
 | 9c28ecd5 | 2026-08-04 | chore: record completed upstream merge trace |
 | 82537ac2 | 2026-08-04 | Merge upstream 0.2.119 sync with privacy trims |
 | dc9b475a | 2026-08-04 | chore: refresh upstream trace |
