@@ -1,0 +1,85 @@
+# Refresh and verify UPSTREAM_TRACE.md for this privacy-trimmed fork.
+#   check   — on every push/PR: verify every fork commit has a decision-record
+#             entry (scripts/upstream-trace.sh --check).
+#   refresh — on push to main: regenerate the git-derived blocks and commit
+#             them back with [skip ci] so this workflow does not re-trigger
+#             itself. Judgement content stays manual.
+
+name: CI - Upstream Trace
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Keep only the latest run per branch/PR; a new push cancels the stale one.
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Verify Decision Record Coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Add Upstream Remote
+        shell: bash
+        run: git remote add upstream https://github.com/xai-org/grok-build.git
+
+      - name: Fetch Upstream
+        shell: bash
+        run: git fetch upstream --prune
+
+      - name: Verify Decision Record Coverage
+        shell: bash
+        run: ./scripts/upstream-trace.sh --check
+
+  refresh:
+    name: Refresh Upstream Trace
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Add Upstream Remote
+        shell: bash
+        run: git remote add upstream https://github.com/xai-org/grok-build.git
+
+      - name: Regenerate Trace Blocks
+        shell: bash
+        run: ./scripts/upstream-trace.sh --fetch
+
+      - name: Commit Refreshed Trace
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- UPSTREAM_TRACE.md; then
+            echo "UPSTREAM_TRACE.md already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add UPSTREAM_TRACE.md
+          git commit -m "chore: refresh upstream trace [skip ci]"
+          git config --local http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git push

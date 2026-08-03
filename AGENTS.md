@@ -44,6 +44,7 @@
 - **Release**：网页手动发版（填 tag，或留空自动取版本 crate 版本号）+ push tag 触发；6 平台产物；sccache 仅 Linux/macOS（Windows 直接编译，其 sccache server 在巨型 crate 上会崩）；protoc/registry/sccache 有缓存；所有 action 锁 commit SHA。
 - **Format Check**：仅 rustfmt，路径过滤 + concurrency。
 - **Workflow and Dependency Checks**：actionlint + zizmor + cargo-deny，独立、不阻塞发布，路径过滤 + concurrency。
+- **Upstream Trace**：push 到 main 后自动跑 `scripts/upstream-trace.sh --fetch`，刷新 `UPSTREAM_TRACE.md` 生成区块并回提交（commit 带 `[skip ci]` 防循环）；push/PR 上校验「决策记录」覆盖完整性（`--check`，机械刷新类提交豁免）；判断性内容（决策记录等）人工维护。
 - 命名：workflow/job/step 用 `CI - xxx` 纯文字前缀、Title Case，无冒号、无 emoji。
 - 工具版本锁定：zizmor / cargo-deny / actionlint 固定版本，升级手动并验证。
 - Token 到期：到期日期集中在 `.github/token-expiry.env`，release/dist workflow 启动时检查（≤30 天 warning，过期 fail）；换 token 时同步更新该文件与仓库 secret。
@@ -51,6 +52,7 @@
 ## 工作习惯约定
 
 - 仓库记录干净：测试不留 tag / 分支 / run 痕迹，测试后清理。
+- 上游同步或本地改动后，更新 `UPSTREAM_TRACE.md`：机械事实（当前状态/同步日志/改动日志）由 `scripts/upstream-trace.sh` 生成、push 到 main 后 CI 自动刷新；人工职责是判断性内容——「决策记录」（原因/裁剪说明）与临时事项（async-openai 镜像、token 到期等）。完整流程见 `.grok/skills/upstream-trace`。
 - 外部写操作（推送、删 tag、发布 release）先确认目标仓库与分支。
 - commit message 用英文、规范，一个提交一个主题。
 - 资源敏感：轻量、增量检查优先；不做全量检查、prewarm、apt 缓存等重流程；缓存要有效但不能无限膨胀。
