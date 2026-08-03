@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 82537ac2 (2026-08-04)
+- 本地 HEAD: 9c28ecd5 (2026-08-04)
 - 版本: 0.2.119
 - 上游基线 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 0 提交 / 本 fork 领先 124 提交; 树差异 183 个文件
+- 落后上游 0 提交 / 本 fork 领先 125 提交; 树差异 183 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 183 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,7 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 9c28ecd5 | 2026-08-04 | chore: record completed upstream merge trace |
 | 82537ac2 | 2026-08-04 | Merge upstream 0.2.119 sync with privacy trims |
 | dc9b475a | 2026-08-04 | chore: refresh upstream trace |
 | 128c8b39 | 2026-08-04 | release: prepare v0.2.119 selective sync |
@@ -267,6 +268,8 @@
 | `128c8b39` | 准备 0.2.119 版本、`SOURCE_REV`、文档和锁文件；跟随上游 async-openai `95b52eb` 基线但 pin 到已有 `juya-ai-lab/async-openai@e03c366c`，保留 `action`/`query`/DeepSeek `queries` 兼容，并新增缺字段/复数查询回归测试 | 宗旨 2（Responses/DeepSeek 功能兼容）+ 宗旨 3（依赖来源和验证可追溯）；metadata、受影响 crate check、定向测试、fmt 和 diff 检查通过，依赖仓库无本地改动 |
 
 | `82537ac2` | 以真实 `git merge --no-ff upstream/main` 形成上游 `e5478eff` 的第二父提交；按全量隐私/功能审计手工保留 vendor/config/path/upload 隔离、`040e3044`、queries/actions 和 async-openai 兼容，选择性吸收 project/model/TUI、版本/lock/release 相关安全部分、外部认证契约测试与 git-head 注释；拒绝 `SkillTrigger`/`skill_md_read` 外部遥测并移除过时的 ProjectPicker telemetry 定义 | 宗旨 1（隐私边界编译级）+ 宗旨 2（功能兼容）+ 宗旨 3（真实同步拓扑和决策可追溯）；fmt、locked metadata、静态扫描和 merge 检查通过；pager/auth 冷编译定向测试在 180 秒受控时限内未完成且无编译诊断，不宣称产物验证通过 |
+
+| `9c28ecd5` | 记录最终上游 merge 的父提交、选择性裁剪、依赖例外、验证证据和待推送/tag 状态，更新交接快照；不改变运行时行为 | 宗旨 3（同步状态、验证边界和后续操作可追溯） |
 
 | 571c2d64 | fix: show full size for partial task output；从上游 0.2.119 候选选择性移植后台任务部分日志的真实总大小提示，仅改 xai-grok-tools 输出格式和测试；不更新版本号或 SOURCE_REV | B1 低风险独立批次：无新增外部通信、遥测、持久化、路径扫描或凭证读取；模型额外看到完整输出字节数，已通过 fmt、针对性测试和 xai-grok-tools 全量 lib 回归；其余 0.2.119 改动仍待全量隐私审计 |
 | `2d4eb18c` | 手工合入 upstream 0.2.119 的 nested checkout watcher 逻辑：识别未声明的 clone/worktree/Sapling checkout，保留 submodule，避免 watcher 覆盖其它 workspace；同时保留 fork 的 vendor hard-deny、symlink 防护和 `.agents/.grok` 可用边界，并修正当前 watcher 根含 `.git` 时的误剪枝风险 | 上游批次 B2-W；宗旨 1（路径/隐私边界优先）+ 宗旨 2（本地 workspace watcher 功能保持）；新增逻辑仅做本地 metadata/git 判断，无上传/遥测/凭证路径；`xai-fsnotify` 定向测试 129 passed、15 ignored，尚未更新版本或 SOURCE_REV |
