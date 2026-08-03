@@ -1,0 +1,47 @@
+[
+  {
+    "category": "features",
+    "description": "**Non-project startup** now creates a session in the current directory without an initial project-directory question.",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**Pre-session model selection** updates the UI immediately and applies the selected model after session creation; failed session creation does not write a new default to disk.",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**Long responses** now show a clickable arrow that jumps back to the start of the answer.",
+    "breaking_change": false
+  },
+  {
+    "category": "features",
+    "description": "**Plan previews** now show Mermaid diagram actions.",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Question cards** now keep keyboard focus while moving through answers.",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Partial task output** now reports the real total output size.",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Nested workspaces** no longer create redundant file watchers, and same-branch commits refresh git-head state.",
+    "breaking_change": false
+  },
+  {
+    "category": "fixes",
+    "description": "**Expired external auth provider** credentials now correctly trigger the interactive sign-in flow.",
+    "breaking_change": false
+  },
+  {
+    "category": "maintenance",
+    "description": "Workspace unknown-method errors accept both current and legacy wire shapes; upstream SkillTrigger and skill_md_read external telemetry were intentionally not adopted.",
+    "breaking_change": false
+  }
+]

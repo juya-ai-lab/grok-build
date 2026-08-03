@@ -38,7 +38,7 @@
 - `Cargo.toml` / `Cargo.lock`：合入后 `cargo check` + `cargo deny check` 验证；`deny.toml` 许可证白名单按需补充。
 - `.github/` 一律保留本仓库的 CI，不采用上游 workflow。
 - 版本：上游 bump 后 release tag 自动跟随（`vX.Y.Z`）；若版本 crate 路径变化，更新 `VERSION_CRATE_MANIFEST`。
-- `async-openai` 依赖（临时改动）：pin 到 `juya-ai-lab/async-openai`（镜像 xAI fork 基座 `95b52eb` + #548 backport：`WebSearchToolCall.action` 与 `WebSearchActionSearch.query` 可选，并兼容 DeepSeek 复数 `action.search.queries`；修复流式 `web_search_call` 偶发 `missing field action` / `missing field query` 及 DeepSeek 400 `missing field queries`）。本次同步时 xai-org 仍 pin `our-forks` 的 `95b52eb`；`our-forks` 当前 `884aff` 虽已吸收 `action` 可选修复，但仍未使 `query` 可选，也未兼容 DeepSeek 复数 `queries`，所以本 pin 继续保留，待三项能力都上游化后再移除。
+- `async-openai` 依赖（当前唯一的 fork 依赖例外）：跟随上游基线时，先比较源码，再把本 fork 的 `action`/`query` 可选与 DeepSeek 复数 `queries` 兼容补丁迁移到新的 juya-ai-lab revision；只有三项能力都已在上游等价实现并完成定向验证后，才可切回上游来源。尽量复用已有远端 revision；只有确需修改该依赖仓库时才先验证、提交并推送其 GitHub 远端，避免把依赖 fork/推送变成常规同步机制。
 
 ## CI 约定（本仓库自持）
 

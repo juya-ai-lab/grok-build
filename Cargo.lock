@@ -526,7 +526,7 @@ dependencies = [
 [[package]]
 name = "async-openai"
 version = "0.33.1"
-source = "git+https://github.com/juya-ai-lab/async-openai.git?rev=7defed8a9049622f2289cf3fe30854fc22e4c49d#7defed8a9049622f2289cf3fe30854fc22e4c49d"
+source = "git+https://github.com/juya-ai-lab/async-openai.git?rev=e03c366c5d6f34fdad356cfa9585bce9008ec22e#e03c366c5d6f34fdad356cfa9585bce9008ec22e"
 dependencies = [
  "async-openai-macros",
  "backoff",
@@ -554,7 +554,7 @@ dependencies = [
 [[package]]
 name = "async-openai-macros"
 version = "0.1.1"
-source = "git+https://github.com/juya-ai-lab/async-openai.git?rev=7defed8a9049622f2289cf3fe30854fc22e4c49d#7defed8a9049622f2289cf3fe30854fc22e4c49d"
+source = "git+https://github.com/juya-ai-lab/async-openai.git?rev=e03c366c5d6f34fdad356cfa9585bce9008ec22e#e03c366c5d6f34fdad356cfa9585bce9008ec22e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13582,7 +13582,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager"
-version = "0.2.118"
+version = "0.2.119"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -13672,7 +13672,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager-bin"
-version = "0.2.118"
+version = "0.2.119"
 dependencies = [
  "anyhow",
  "clap",
@@ -13937,7 +13937,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-shell"
-version = "0.2.118"
+version = "0.2.119"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -14355,7 +14355,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-version"
-version = "0.2.118"
+version = "0.2.119"
 dependencies = [
  "semver",
 ]

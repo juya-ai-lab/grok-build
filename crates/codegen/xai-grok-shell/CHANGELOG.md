@@ -1,5 +1,26 @@
 # Changelog
 
+# 0.2.119 — 2026-08-04
+
+## Features
+
+- **Non-project startup** now creates a session in the current directory without an initial project-directory question.
+- **Pre-session model selection** updates the UI immediately and applies the selected model after session creation; failed session creation does not write a new default to disk.
+- **Long responses** now show a clickable arrow that jumps back to the start of the answer.
+- **Plan previews** now show Mermaid diagram actions.
+
+## Bug Fixes
+
+- **Question cards** now keep keyboard focus while moving through answers.
+- **Partial task output** now reports the real total output size.
+- **Nested workspaces** no longer create redundant file watchers, and same-branch commits refresh git-head state.
+- **Expired external auth provider** credentials now correctly trigger the interactive sign-in flow.
+
+## Maintenance
+
+- Workspace unknown-method errors accept both current and legacy wire shapes.
+- Upstream `SkillTrigger` / `skill_md_read` external telemetry was intentionally not adopted; skill execution remains available without expanding the external event schema.
+
 # 0.2.118 — 2026-07-31
 
 ## Features
@@ -1926,5 +1947,4 @@
 ## Performance
 
 - **Large chat sessions** now use substantially less memory and run faster during forks, rewinds, and compaction.
-
 

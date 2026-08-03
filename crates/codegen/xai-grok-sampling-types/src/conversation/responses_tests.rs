@@ -1625,6 +1625,56 @@ fn backend_tool_call_position_stable() {
 }
 
 #[test]
+fn web_search_stream_fields_accept_partial_and_plural_payloads() {
+    // In-progress Responses events can omit action entirely.
+    let missing_action: rs::WebSearchToolCall = serde_json::from_value(serde_json::json!({
+        "id": "ws_pending",
+        "status": "in_progress"
+    }))
+    .expect("missing action must be accepted for in-progress web search calls");
+    assert!(missing_action.action.is_none());
+
+    // They can also include a search action before query is populated.
+    let missing_query: rs::WebSearchToolCall = serde_json::from_value(serde_json::json!({
+        "id": "ws_searching",
+        "status": "searching",
+        "action": {
+            "type": "search",
+            "sources": []
+        }
+    }))
+    .expect("missing query must be accepted for partial search actions");
+    let Some(rs::WebSearchToolCallAction::Search(search)) = missing_query.action else {
+        panic!("expected a search action");
+    };
+    assert_eq!(search.query, None);
+    assert!(search.queries.is_empty());
+
+    // DeepSeek-compatible responses use plural `queries` on the wire.
+    let plural_query: rs::WebSearchToolCall = serde_json::from_value(serde_json::json!({
+        "id": "ws_deepseek",
+        "status": "completed",
+        "action": {
+            "type": "search",
+            "queries": ["alpha", "beta"],
+            "sources": []
+        }
+    }))
+    .expect("plural queries must be accepted");
+    let Some(rs::WebSearchToolCallAction::Search(search)) = plural_query.action.as_ref() else {
+        panic!("expected a search action");
+    };
+    assert_eq!(search.query, None);
+    assert_eq!(search.queries, ["alpha", "beta"]);
+
+    let encoded = serde_json::to_value(&plural_query).expect("plural queries must serialize");
+    assert_eq!(
+        encoded["action"]["queries"],
+        serde_json::json!(["alpha", "beta"])
+    );
+}
+
+#[test]
 fn empty_content_assistant_with_tool_calls_and_reasoning() {
     let req = ConversationRequest::from_items(vec![
         ConversationItem::user("u1"),

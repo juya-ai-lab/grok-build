@@ -1,11 +1,11 @@
 # Auto-generated workspace root. Prefer editing per-crate Cargo.toml files.
 
 [patch.crates-io]
-# juya-ai-lab mirror of the xAI async-openai fork (base 95b52eb) plus a
-# backport making WebSearchToolCall.action and WebSearchActionSearch.query
-# optional (#548), so in-progress web_search_call stream events deserialize
-# without "missing field `action`" / "missing field `query`" errors; DeepSeek plural queries supported.
-async-openai = { git = "https://github.com/juya-ai-lab/async-openai.git", rev = "7defed8a9049622f2289cf3fe30854fc22e4c49d" }
+# juya-ai-lab mirror of the xAI async-openai fork, based on upstream 95b52eb
+# and carrying our action/query optionality plus DeepSeek plural-queries fix.
+# Pin the merged dependency commit so the three compatibility changes remain
+# explicit when the upstream baseline advances.
+async-openai = { git = "https://github.com/juya-ai-lab/async-openai.git", rev = "e03c366c5d6f34fdad356cfa9585bce9008ec22e" }
 
 [workspace]
 resolver = "2"
