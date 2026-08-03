@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 4034e5a6 (2026-08-03)
+- 本地 HEAD: 3cc9a6cd (2026-08-03)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 落后上游 0 提交 / 本 fork 领先 60 提交; 树差异 162 个文件
+- 落后上游 0 提交 / 本 fork 领先 62 提交; 树差异 162 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 162 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -59,6 +59,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 3cc9a6cd | 2026-08-03 | fix: restore debug tracing import for Claude import state |
+| f45b3fd4 | 2026-08-03 | chore: refresh upstream trace [skip ci] |
 | 4034e5a6 | 2026-08-03 | docs: record upstream merge decisions and collaboration context |
 | 6a48278d | 2026-08-03 | Merge upstream 0.2.118 sync with privacy trims |
 | a49a236d | 2026-08-03 | chore: refresh upstream trace [skip ci] |
