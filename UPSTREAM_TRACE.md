@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: d3a1ca17 (2026-08-04)
+- 本地 HEAD: 981c63b8 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 1 提交 / 本 fork 领先 114 提交; 树差异 224 个文件
+- 落后上游 1 提交 / 本 fork 领先 115 提交; 树差异 224 个文件
 - 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,7 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 981c63b8 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | d3a1ca17 | 2026-08-04 | docs: update upstream selection status |
 | 5ecea74a | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | fd6d6db7 | 2026-08-04 | docs: record upstream rpc batch |
@@ -183,6 +184,19 @@
 | async-openai 临时镜像 | 继续 pin `juya-ai-lab/async-openai@7defed8`（镜像 xAI fork 基座 `95b52eb` + `action`/`query` 可选及 DeepSeek 复数 `queries` backport） | 上游同时具备三项兼容能力后对齐并移除；当前 `our-forks@884aff` 只解决 `action` | AGENTS.md「async-openai 依赖」 |
 | CI token 到期 | release / dist 用 token 的到期日集中登记 | release/dist workflow 启动时检查：≤30 天 warning，过期 fail；换 token 时同步更新 | `.github/token-expiry.env` |
 | 上游 0.2.119 选择性同步仍待收尾 | `upstream/main=e5478eff`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`；相对 `780d1388` 的 72 个文件已完成第一轮全量 diff/调用链/依赖/发布路径审计，并选择性合入 B1、B2、隐私、认证和 RPC 批次 | 继续保留并验证 fork 隐私边界；project-picker/model/TUI、SkillTrigger external telemetry、上游版本/lock/release 文档仍需单独决定，完成前不更新版本或 SOURCE_REV | 上游同步候选；当前为选择性同步 |
+
+## 当前交接快照（2026-08-04）
+
+本节用于上下文压缩或协作者交接时快速恢复现场；根目录文档和 Git 事实优先于旧的临时笔记。
+
+- 当前分支：`codex/upstream-0.2.119-step1-output-size`；当前 HEAD：`981c63b8641cd227a55736bfa2128a3722f8fd43`（`chore: refresh upstream trace [skip ci]`）；记录时工作树干净。
+- 上游候选：`upstream/main=e5478eff1e4050558e12e1328b85e6616632efb6`，上游版本 `0.2.119`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`；本 fork 仍为版本 `0.2.118`、`SOURCE_REV=64c4de99cc822b25ce9c54ab5a4f372093d0885d`。
+- 已选择性合入：`571c2d64`（partial task output 的真实总大小）、`2d4eb18c`（nested checkout watcher）、`6c0f40d7`（commit-aware git-head dedup）、`0d72ccd7`（复用 subagent watcher 覆盖范围）、`2d9fbbde`（删除带路径/提示词/配置/凭证的 subagent 上传链并加 vendor-state 边界）、`8eb35738`（interactive auth 修复）、`19548365`（兼容 legacy unknown workspace methods）。
+- 已保护并验证 fork 既有改动：`040e3044` 仍为祖先；`async-openai@7defed8` pin 保留，web-search 的可选 `action`/`query` 与 DeepSeek 复数 `queries` 处理保留；`.agents/skills`、`.agents/commands`、OAuth 和正常推理路径保留；上游新增 `SkillTrigger`/`skill_md_read` 外部遥测未进入当前代码。
+- 证据摘要：`cargo fmt --all -- --check`、`git diff --check`、`scripts/upstream-trace.sh --check` 通过；针对 B1/B2、隐私边界、web-search、auth、RPC 的定向测试通过（包括 shell 6、checkout 4、git-head 1、web-search `4+1+1`、auth flow 36、RPC 1，以及 vendor LSP/read-file/AGENTS/classifier 测试）。未宣称全量编译产物或 release artifact 已验证；冷编译期间曾有受控超时，但无失败测试或残留 cargo/rustc 进程。
+- 明确暂缓：project-directory picker/recent-dirs、model pre-session/TUI/pager 大批次；`SkillTrigger`/skill source/name/trigger external telemetry；上游版本 crate、Cargo.lock、release/docs、`.github`。暂缓原因和后续审查边界见「临时事项与到期项」及后续决策记录；不得直接 raw merge。
+- 操作状态：临时目录 `upstream-0.2.119-work/` 已删除；根目录 `UPSTREAM_TRACE.md` 与 `CHANGELOG.md` 是当前选择性同步的记录源。没有推送、没有启动 release、没有移动 `v0.2.118-fix1`（该 tag 仍指向 `cb53eced54c3a6e76773413bdeb625075213bf38`）。
+- 继续工作时先复核 `git status --short --branch`、本快照和 `AGENTS.md`，再按批次处理；若要继续 picker/model/TUI 或版本/release，先单独完成功能、隐私、依赖和产物验证决策，不得以“上游有更新”作为自动合入依据。
 
 ## 注意事项
 
