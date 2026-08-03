@@ -917,7 +917,7 @@ fn new_session_starts_with_prompt_focused() {
     assert_eq!(app.agents[&id].active_pane, ActivePane::Prompt);
 }
 #[test]
-fn switch_model_deferred_when_no_session_id() {
+fn switch_model_deferred_when_no_session_id_does_not_persist_early() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     let model_id = acp::ModelId::new(std::sync::Arc::from("grok-4.5"));
@@ -930,11 +930,8 @@ fn switch_model_deferred_when_no_session_id() {
         &mut app,
     );
     assert!(
-        matches!(
-            &effects[..],
-            [Effect::PersistPreferredModel { model_id: m, .. }] if m == &model_id
-        ),
-        "expected persist-only, got {effects:?}"
+        effects.is_empty(),
+        "pre-session selection must not persist before session creation: {effects:?}"
     );
     assert_eq!(
         app.agents[&id].session.models.current,

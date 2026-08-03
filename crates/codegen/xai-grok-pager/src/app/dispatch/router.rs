@@ -917,11 +917,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
             };
             let Some(session_id) = agent.session.session_id.clone() else {
                 let prev_model = agent.session.models.current.clone();
-                let prev_effort = agent.session.models.reasoning_effort;
                 agent.session.models.set_current(model_id.clone(), effort);
-                let resolved_effort = agent.session.models.reasoning_effort;
-                let unchanged =
-                    prev_model.as_ref() == Some(&model_id) && prev_effort == resolved_effort;
                 let rollback_prev = agent
                     .session
                     .deferred_model_switch
@@ -934,14 +930,10 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
                         effort,
                         prev_model_id: rollback_prev,
                     });
-                return if unchanged {
-                    vec![]
-                } else {
-                    vec![Effect::PersistPreferredModel {
-                        model_id,
-                        reasoning_effort: resolved_effort,
-                    }]
-                };
+                // Do not persist before the session exists. Session creation
+                // can still fail; a successful deferred switch emits
+                // `PersistPreferredModel` from `handle_switch_model_complete`.
+                return vec![];
             };
             agent.session.model_switch_pending = true;
             vec![Effect::SwitchModel {

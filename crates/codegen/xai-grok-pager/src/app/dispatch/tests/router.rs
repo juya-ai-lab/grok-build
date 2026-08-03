@@ -1455,7 +1455,7 @@ fn pick_over_cli_seed_keeps_display_as_rollback_target() {
     );
 }
 #[test]
-fn deferred_switch_updates_display_and_persists() {
+fn deferred_switch_updates_display_without_persisting_before_session() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     let model_id = acp::ModelId::new(std::sync::Arc::from("model-b"));
@@ -1487,11 +1487,8 @@ fn deferred_switch_updates_display_and_persists() {
         "nothing is in flight yet — the queue must not be blocked"
     );
     assert!(
-        matches!(
-            &effects[..],
-            [Effect::PersistPreferredModel { model_id: m, .. }] if m == &model_id
-        ),
-        "expected a single PersistPreferredModel effect, got {effects:?}"
+        effects.is_empty(),
+        "pre-session selection must not persist before session creation: {effects:?}"
     );
     let effects = dispatch(
         Action::SwitchModel {
