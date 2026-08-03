@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 0af2361f (2026-08-03)
+- 本地 HEAD: 59f2c19d (2026-08-03)
 - 版本: 0.2.117
 - 上游基线 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
 - 上游 upstream/main: a4221165 (2026-07-31, Synced from monorepo)
 - 上游 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
-- 落后上游 0 提交 / 本 fork 领先 55 提交; 树差异 159 个文件
+- 落后上游 0 提交 / 本 fork 领先 57 提交; 树差异 159 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 159 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -58,6 +58,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 59f2c19d | 2026-08-03 | chore: update upstream trace |
+| a26df1c1 | 2026-08-03 | fix: make trace coverage check robust to short-sha length |
 | 0af2361f | 2026-08-03 | chore: refresh upstream trace [skip ci] |
 | 07cd629b | 2026-08-03 | chore: update upstream trace |
 | 1adbe5e6 | 2026-08-03 | chore: refresh upstream trace [skip ci] |
