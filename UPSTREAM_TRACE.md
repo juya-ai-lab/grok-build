@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 5aa7750 (2026-08-03)
+- 本地 HEAD: 1adbe5e6 (2026-08-03)
 - 版本: 0.2.117
 - 上游基线 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
-- 上游 upstream/main: a422116 (2026-07-31, Synced from monorepo)
+- 上游 upstream/main: a4221165 (2026-07-31, Synced from monorepo)
 - 上游 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
-- 落后上游 0 提交 / 本 fork 领先 52 提交; 树差异 159 个文件
+- 落后上游 0 提交 / 本 fork 领先 53 提交; 树差异 159 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 159 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -32,23 +32,23 @@
 <!-- TRACE:sync:BEGIN -->
 | 上游提交 | 日期 | 内容 | SOURCE_REV |
 |---|---|---|---|
-| a422116 | 2026-07-31 | Synced from monorepo | 8d69c91f02bcacf01e98d5aebbf2f92547c45738 |
-| dd04f39 | 2026-07-30 | Synced from monorepo | 2a28b4a86cfc4a4c133c35b7fc2a6a9964387c39 |
-| 500129c | 2026-07-29 | Synced from monorepo | 6372e41d828b8a6ee82c29e01a69e27ec895cca9 |
-| 5da6962 | 2026-07-28 | Synced from monorepo | 2a818575225183d8ca915f5632a09b8067b5156a |
-| 02d9359 | 2026-07-27 | Synced from monorepo | 1adcd1f477870e4a97bacbd6be78c8a3bfbac46d |
-| b41c75a | 2026-07-26 | Synced from monorepo | 91d8cf309110a3b879c1b8198f7525aed545dfb4 |
-| 47348d1 | 2026-07-25 | Synced from monorepo | d02693a856a54f1030695b36b91d276e96b30b23 |
-| 6e38642 | 2026-07-24 | Synced from monorepo | 9b8d35b46d959c042ea9aa31cbbebbd1f0c5c527 |
-| 69f0ba8 | 2026-07-23 | Synced from monorepo | 95d84f443eddcbed6cbfd6eed22e2eafe6b3939d |
-| a5727c5 | 2026-07-22 | Synced from monorepo | 30192d2eef5d91a8fff0e53957de5bd05b43398c |
-| 3af4d5d | 2026-07-21 | Synced from monorepo | 0f4d7c91b8b2b408333f6de1e8a76cb8eaa71899 |
-| a881e67 | 2026-07-20 | Synced from monorepo | c5c4ce03436b4bb2cec43d3feaa27dee0109bf37 |
-| ba76b0a | 2026-07-19 | Synced from monorepo | ba69d70c2f7d70a130a323b2becdf137af784c7f |
-| 7cfcb20 | 2026-07-18 | Synced from monorepo | f9736c7b86f8e1c0e99e20ebbbd1195cd0c147e3 |
-| 98c3b24 | 2026-07-17 | Synced from monorepo | 124d85bc5dc6e7805560215fcc6d5413944920e1 |
-| 8adf901 | 2026-07-16 | Synced from monorepo | 2ec0f0c8488842da03a71eeee3c61154957ca919 |
-| c68e39f | 2026-07-16 | Publish harness and TUI open-source | n/a |
+| a4221165 | 2026-07-31 | Synced from monorepo | 8d69c91f02bcacf01e98d5aebbf2f92547c45738 |
+| dd04f397 | 2026-07-30 | Synced from monorepo | 2a28b4a86cfc4a4c133c35b7fc2a6a9964387c39 |
+| 500129c7 | 2026-07-29 | Synced from monorepo | 6372e41d828b8a6ee82c29e01a69e27ec895cca9 |
+| 5da6962e | 2026-07-28 | Synced from monorepo | 2a818575225183d8ca915f5632a09b8067b5156a |
+| 02d93594 | 2026-07-27 | Synced from monorepo | 1adcd1f477870e4a97bacbd6be78c8a3bfbac46d |
+| b41c75a5 | 2026-07-26 | Synced from monorepo | 91d8cf309110a3b879c1b8198f7525aed545dfb4 |
+| 47348d13 | 2026-07-25 | Synced from monorepo | d02693a856a54f1030695b36b91d276e96b30b23 |
+| 6e386420 | 2026-07-24 | Synced from monorepo | 9b8d35b46d959c042ea9aa31cbbebbd1f0c5c527 |
+| 69f0ba88 | 2026-07-23 | Synced from monorepo | 95d84f443eddcbed6cbfd6eed22e2eafe6b3939d |
+| a5727c59 | 2026-07-22 | Synced from monorepo | 30192d2eef5d91a8fff0e53957de5bd05b43398c |
+| 3af4d5d3 | 2026-07-21 | Synced from monorepo | 0f4d7c91b8b2b408333f6de1e8a76cb8eaa71899 |
+| a881e670 | 2026-07-20 | Synced from monorepo | c5c4ce03436b4bb2cec43d3feaa27dee0109bf37 |
+| ba76b0a6 | 2026-07-19 | Synced from monorepo | ba69d70c2f7d70a130a323b2becdf137af784c7f |
+| 7cfcb20d | 2026-07-18 | Synced from monorepo | f9736c7b86f8e1c0e99e20ebbbd1195cd0c147e3 |
+| 98c3b243 | 2026-07-17 | Synced from monorepo | 124d85bc5dc6e7805560215fcc6d5413944920e1 |
+| 8adf9013 | 2026-07-16 | Synced from monorepo | 2ec0f0c8488842da03a71eeee3c61154957ca919 |
+| c68e39f6 | 2026-07-16 | Publish harness and TUI open-source | n/a |
 <!-- TRACE:sync:END -->
 
 ## 本 fork 改动日志
@@ -58,58 +58,59 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
-| 5aa7750 | 2026-08-03 | chore: add script-driven upstream trace with CI auto-refresh and coverage check |
-| bfa46df | 2026-08-03 | docs: add npm/pnpm global install note to README |
-| 9d9e509 | 2026-08-02 | ci(npm): retry E409 registry race and tolerate tombstoned versions |
-| d62623a | 2026-08-01 | fix: support DeepSeek plural web search queries |
-| 777fbf4 | 2026-08-01 | fix: tolerate missing query on streamed web search calls |
-| d9fc97c | 2026-08-01 | fix: tolerate missing action on streamed web search calls |
-| 767f3a6 | 2026-08-01 | ci: track token expiry dates and remind before rotation |
-| f9f6455 | 2026-08-01 | fix(npm): decouple release asset version from npm package version |
-| ede7b08 | 2026-08-01 | ci(npm): support version and dist-tag overrides for hotfix publishes |
-| b062b23 | 2026-08-01 | fix(npm): expose grok as the CLI command |
-| 903a6c6 | 2026-08-01 | ci: publish prebuilt binaries to npm after release |
-| 1b61150 | 2026-08-01 | ci: satisfy shellcheck in release notes generation |
-| dac1977 | 2026-08-01 | ci: fix macOS checksum and dedupe release notes |
-| 2175302 | 2026-08-01 | ci: use dedicated token for release creation |
-| 64b5d14 | 2026-08-01 | ci: satisfy shellcheck in sccache env setup |
-| 4377dcc | 2026-08-01 | ci: cap sccache cache size to fit repo cache budget |
-| 98d31e8 | 2026-08-01 | ci: publish release assets per platform as they finish |
-| 0838904 | 2026-08-01 | ci: resolve format check toolchain from rust-toolchain.toml |
-| 0172b44 | 2026-08-01 | Merge branch port/upstream-0.2.117 into main |
-| 15c8c61 | 2026-08-01 | ci: let format check follow the repository toolchain |
-| f8ebdfb | 2026-08-01 | port: merge upstream 0.2.117 sync with privacy trims |
-| 401a086 | 2026-08-01 | docs: add AGENTS.md capturing fork principles and merge rules |
-| 353933d | 2026-08-01 | ci: skip sccache on Windows and upgrade actions/cache to node24 |
-| 35102ee | 2026-08-01 | ci: separate manual dispatch runs in concurrency groups |
-| 60e0d84 | 2026-08-01 | ci: pin zizmor/cargo-deny versions and scope release concurrency |
-| 5a88ec7 | 2026-08-01 | ci: cache tool downloads and rust toolchain in lint jobs |
-| 6eb2edd | 2026-08-01 | ci: harden workflows and add dependency audit checks |
-| 634a3dc | 2026-08-01 | ci: keep the check workflow to formatting only |
-| 0bcc231 | 2026-08-01 | ci: add lightweight fmt/check workflow |
-| 7c1d67e | 2026-08-01 | ci: cap sccache size per release target |
-| de0a82a | 2026-08-01 | ci: fail manual releases when the tag points elsewhere |
-| e844fba | 2026-08-01 | ci: print sccache stats after release builds |
-| a402686 | 2026-08-01 | ci: cache protoc installs across release runs |
-| 76cb0a3 | 2026-08-01 | ci: cache release compiles with sccache |
-| 983a855 | 2026-08-01 | ci: create release tag up front and share resolved version |
-| 1e6f082 | 2026-07-31 | ci: make version crate manifest path configurable |
-| 80c0b81 | 2026-07-31 | ci: derive manual release tag from the crate version |
-| 18ed28f | 2026-07-31 | Merge branch 'ci/tag-release' into main |
-| 987822f | 2026-07-31 | Merge branch 'port-upstream' into main |
-| 3c17dd0 | 2026-07-31 | ci: auto-resolve latest tag for manual release runs |
-| d286045 | 2026-07-31 | ci: allow manual release runs via a tag input |
-| 2074bb9 | 2026-07-31 | ci: support manual release re-run via workflow_dispatch |
-| 38f87fa | 2026-07-31 | style: run cargo fmt --all on the merged port |
-| f36387f | 2026-07-31 | port: add privacy-fork CI files |
-| 8afeb2c | 2026-07-31 | port: pager, docs, README, upstream surface audit |
-| 422ee9b | 2026-07-31 | port: remove Claude/Codex/Cursor compatibility surfaces |
-| bff0968 | 2026-07-31 | port: gate telemetry, uploads, feedback, error reporting and their consumers |
-| 6d0bfa9 | 2026-07-31 | port: compile-time kill switches, path validators, relay gates, deps |
-| 2eed7e7 | 2026-07-20 | ci: add multi-platform GitHub Actions release workflow |
-| a5c85ba | 2026-07-20 | style: apply rustfmt to privacy-gate follow-up edits |
-| 4a6004e | 2026-07-19 | Harden privacy boundaries and preserve shared agent commands |
-| 7190b3f | 2026-07-19 | Disable vendor compatibility and content uploads |
+| 1adbe5e6 | 2026-08-03 | chore: refresh upstream trace [skip ci] |
+| 5aa77501 | 2026-08-03 | chore: add script-driven upstream trace with CI auto-refresh and coverage check |
+| bfa46df8 | 2026-08-03 | docs: add npm/pnpm global install note to README |
+| 9d9e509f | 2026-08-02 | ci(npm): retry E409 registry race and tolerate tombstoned versions |
+| d62623a1 | 2026-08-01 | fix: support DeepSeek plural web search queries |
+| 777fbf46 | 2026-08-01 | fix: tolerate missing query on streamed web search calls |
+| d9fc97cd | 2026-08-01 | fix: tolerate missing action on streamed web search calls |
+| 767f3a6a | 2026-08-01 | ci: track token expiry dates and remind before rotation |
+| f9f64558 | 2026-08-01 | fix(npm): decouple release asset version from npm package version |
+| ede7b088 | 2026-08-01 | ci(npm): support version and dist-tag overrides for hotfix publishes |
+| b062b230 | 2026-08-01 | fix(npm): expose grok as the CLI command |
+| 903a6c66 | 2026-08-01 | ci: publish prebuilt binaries to npm after release |
+| 1b611506 | 2026-08-01 | ci: satisfy shellcheck in release notes generation |
+| dac1977c | 2026-08-01 | ci: fix macOS checksum and dedupe release notes |
+| 21753026 | 2026-08-01 | ci: use dedicated token for release creation |
+| 64b5d144 | 2026-08-01 | ci: satisfy shellcheck in sccache env setup |
+| 4377dccf | 2026-08-01 | ci: cap sccache cache size to fit repo cache budget |
+| 98d31e80 | 2026-08-01 | ci: publish release assets per platform as they finish |
+| 0838904b | 2026-08-01 | ci: resolve format check toolchain from rust-toolchain.toml |
+| 0172b44d | 2026-08-01 | Merge branch port/upstream-0.2.117 into main |
+| 15c8c61c | 2026-08-01 | ci: let format check follow the repository toolchain |
+| f8ebdfbe | 2026-08-01 | port: merge upstream 0.2.117 sync with privacy trims |
+| 401a0864 | 2026-08-01 | docs: add AGENTS.md capturing fork principles and merge rules |
+| 353933dc | 2026-08-01 | ci: skip sccache on Windows and upgrade actions/cache to node24 |
+| 35102ee7 | 2026-08-01 | ci: separate manual dispatch runs in concurrency groups |
+| 60e0d84d | 2026-08-01 | ci: pin zizmor/cargo-deny versions and scope release concurrency |
+| 5a88ec74 | 2026-08-01 | ci: cache tool downloads and rust toolchain in lint jobs |
+| 6eb2edd7 | 2026-08-01 | ci: harden workflows and add dependency audit checks |
+| 634a3dcc | 2026-08-01 | ci: keep the check workflow to formatting only |
+| 0bcc2317 | 2026-08-01 | ci: add lightweight fmt/check workflow |
+| 7c1d67e6 | 2026-08-01 | ci: cap sccache size per release target |
+| de0a82a5 | 2026-08-01 | ci: fail manual releases when the tag points elsewhere |
+| e844fbab | 2026-08-01 | ci: print sccache stats after release builds |
+| a402686e | 2026-08-01 | ci: cache protoc installs across release runs |
+| 76cb0a34 | 2026-08-01 | ci: cache release compiles with sccache |
+| 983a855a | 2026-08-01 | ci: create release tag up front and share resolved version |
+| 1e6f0824 | 2026-07-31 | ci: make version crate manifest path configurable |
+| 80c0b815 | 2026-07-31 | ci: derive manual release tag from the crate version |
+| 18ed28f6 | 2026-07-31 | Merge branch 'ci/tag-release' into main |
+| 987822ff | 2026-07-31 | Merge branch 'port-upstream' into main |
+| 3c17dd0a | 2026-07-31 | ci: auto-resolve latest tag for manual release runs |
+| d286045e | 2026-07-31 | ci: allow manual release runs via a tag input |
+| 2074bb9d | 2026-07-31 | ci: support manual release re-run via workflow_dispatch |
+| 38f87fae | 2026-07-31 | style: run cargo fmt --all on the merged port |
+| f36387fa | 2026-07-31 | port: add privacy-fork CI files |
+| 8afeb2c7 | 2026-07-31 | port: pager, docs, README, upstream surface audit |
+| 422ee9ba | 2026-07-31 | port: remove Claude/Codex/Cursor compatibility surfaces |
+| bff09687 | 2026-07-31 | port: gate telemetry, uploads, feedback, error reporting and their consumers |
+| 6d0bfa9d | 2026-07-31 | port: compile-time kill switches, path validators, relay gates, deps |
+| 2eed7e74 | 2026-07-20 | ci: add multi-platform GitHub Actions release workflow |
+| a5c85bad | 2026-07-20 | style: apply rustfmt to privacy-gate follow-up edits |
+| 4a6004e2 | 2026-07-19 | Harden privacy boundaries and preserve shared agent commands |
+| 7190b3f7 | 2026-07-19 | Disable vendor compatibility and content uploads |
 <!-- TRACE:fork:END -->
 
 ## 临时事项与到期项
@@ -131,20 +132,25 @@
 
 人工维护：每次上游同步或本地改动，在此追加一行"原因/裁剪说明"，用 commit 或上游 SHA 作锚点。
 
-### 本地改动记录（2026-08-03 起，含 fork 建立时回填）
+### 本地改动记录（覆盖 fork 全部历史，按主题分组）
 
-| 提交 | 内容 | 原因/对应宗旨 |
+| 提交（SHA） | 内容 | 原因/对应宗旨 |
 |---|---|---|
-| `2175302` | release 用专用 token | CI 安全：凭证最小化，避免权限过大 |
-| `dac1977` `1b61150` | release notes 生成修复（macOS 校验和、shellcheck） | 发布流程可靠、可复现 |
-| `903a6c6` | release 后发布预编译二进制到 npm | 分发渠道：npm 用户可全局安装（配合 `bfa46df` 文档） |
-| `b062b23` | npm 包暴露 `grok` 命令 | npm 包可用性：装完即用 |
-| `ede7b08` `f9f6455` | npm 版本/dist-tag 覆盖、资产版本与包版本解耦 | npm 发布灵活性：hotfix 不依赖新 release |
-| `767f3a6` | token 到期日期登记与提醒 | CI 可维护：凭证轮换不靠记忆 |
-| `d9fc97c` `777fbf4` `d62623a` | 容忍流式 web_search 缺 `action`/`query`；支持 DeepSeek 复数 `queries` | async-openai 临时镜像的兼容层（见「临时事项」） |
-| `9d9e509` | npm registry E409 竞争重试、容忍 tombstone 版本 | npm 发布稳定性 |
-| `bfa46df` | README 增加 npm/pnpm 全局安装说明 | 文档：配合 `903a6c6` 的分发渠道 |
-| `chore: add script-driven upstream trace with CI auto-refresh`（本提交，SHA 见上方生成区） | 建立脚本驱动的上游 trace 机制：`scripts/upstream-trace.sh` 生成机械事实 + CI 在 push 到 main 后自动刷新回提交 + `.grok/skills/upstream-trace` 固化流程 + AGENTS.md 规则 | 宗旨「自持可跟进」：决策留痕、机械事实不靠人记；CI 接管刷新降低人工负担 |
+| `7190b3f7` `4a6004e2` `a5c85bad` `6d0bfa9d` `bff09687` `422ee9ba` `8afeb2c7` `f36387fa` `38f87fae` | 隐私裁剪 port 系列：禁用 vendor 兼容与内容上传、编译级 kill switch/路径校验/relay 门控、遥测/上传/反馈/错误上报门控、移除 Claude/Codex/Cursor 兼容面、pager/文档审计、fork CI 文件、fmt 收尾 | 宗旨 1（隐私边界编译级，不可协商）+ 2（可用性不缩水）；即 AGENTS.md 引用的 port 提交 `6d0bfa9`/`bff0968`/`422ee9b` |
+| `2eed7e74` `2074bb9d` `d286045e` `3c17dd0a` `80c0b815` `1e6f0824` `983a855a` `de0a82a5` | release workflow 基建：多平台发布、手动触发（tag 输入/自动解析）、版本 crate 路径可配、先建 tag 共享解析版本、防 tag 指向错误 | AGENTS.md「Release」：网页手动发版；版本单点可配 |
+| `76cb0a34` `a402686e` `e844fbab` `7c1d67e6` `353933dc` `4377dccf` `64b5d144` | 构建缓存：sccache/protoc 缓存、sccache 统计、按目标限容、Windows 跳过 sccache、缓存预算限容、shellcheck 修复 | 资源敏感：缓存要有效但不能无限膨胀 |
+| `0bcc2317` `634a3dcc` `6eb2edd7` `5a88ec74` `60e0d84d` `35102ee7` `15c8c61c` `0838904b` | format/lint/依赖审计：仅 fmt 的轻量检查、workflow 加固与 cargo-deny、工具/toolchain 缓存、zizmor/cargo-deny 版本锁定、并发分组、toolchain 跟随 `rust-toolchain.toml` | AGENTS.md「CI 约定」：独立、不阻塞发布 |
+| `987822ff` `18ed28f6` `0172b44d` | 分支合并（port-upstream / ci/tag-release / port/upstream-0.2.117） | 合入记录 |
+| `f8ebdfbe` | 合入上游 0.2.117 sync 并按 AGENTS.md 重新应用隐私裁剪 | 「上游合并规则」：上游改动 → 逐个重新裁剪 |
+| `401a0864` | AGENTS.md：fork 原则、合并规则、CI 约定文档化 | 宗旨 3（自持可跟进）：规则单点、决策留痕 |
+| `98d31e80` | 各平台 release 产物完成后即发布 | 发布速度与可观察性 |
+| `21753026` | release 用专用 token | CI 安全：凭证最小化 |
+| `dac1977c` `1b611506` | release notes 生成修复（macOS 校验和、shellcheck） | 发布流程可靠、可复现 |
+| `767f3a6a` | token 到期日期登记与提醒 | CI 可维护：凭证轮换不靠记忆 |
+| `903a6c66` `b062b230` `ede7b088` `f9f64558` `9d9e509f` | npm 分发：发布预编译二进制、暴露 `grok` 命令、版本/dist-tag 覆盖、资产/包版本解耦、E409 重试 | 分发渠道：npm/pnpm 全局安装 |
+| `d9fc97cd` `777fbf46` `d62623a1` | 容忍流式 web_search 缺 `action`/`query`、支持 DeepSeek 复数 `queries` | async-openai 临时镜像兼容层（见「临时事项」） |
+| `bfa46df8` | README 增加 npm/pnpm 全局安装说明 | 文档：配合 npm 分发 |
+| `5aa77501` | 建立脚本驱动的上游 trace 机制：`scripts/upstream-trace.sh` 生成机械事实 + CI 自动刷新回提交 + 决策记录覆盖校验（`--check`）+ `.grok/skills/upstream-trace` 固化流程 + AGENTS.md 规则 | 宗旨 3：决策留痕、机械事实不靠人记；CI 接管刷新与校验 |
 
 ### 上游同步记录（未来在此追加）
 
