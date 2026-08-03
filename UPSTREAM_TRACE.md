@@ -16,13 +16,13 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: c7af57ca (2026-08-04)
-- 版本: 0.2.118
-- 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
+- 本地 HEAD: 128c8b39 (2026-08-04)
+- 版本: 0.2.119
+- 上游基线 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 1 提交 / 本 fork 领先 118 提交; 树差异 224 个文件
-- 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
+- 落后上游 1 提交 / 本 fork 领先 122 提交; 树差异 185 个文件
+- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 185 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
 ## 上游同步日志
@@ -60,6 +60,10 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 128c8b39 | 2026-08-04 | release: prepare v0.2.119 selective sync |
+| 5e890799 | 2026-08-04 | fix: defer pre-session model persistence |
+| efe7a0fb | 2026-08-04 | feat: sync upstream project startup and tui flow |
+| eb09b422 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | c7af57ca | 2026-08-04 | docs: clarify upstream handoff anchors |
 | e8f23431 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 7c33fa07 | 2026-08-04 | docs: add upstream merge handoff snapshot |
@@ -255,6 +259,10 @@
 | `b6d5a672` | README 开头声明本 fork 特有的根目录文档，并用 `JUYA FORK MAINTAINED` / `UPSTREAM-CARRIED` 标记分隔 fork 说明与上游带来的内容 | 宗旨 3：同步上游 README 时能识别维护边界，避免覆盖隐私、分发和协作说明 |
 | `4e5100d5` | 将上游同步的隐私审计范围提升为整个 diff、调用链、依赖、构建与发布路径，不以历史裁剪清单替代全量审计；未决项需记录并暂停合入 | 宗旨 1（隐私边界编译级）+ 宗旨 3（同步决策可追溯） |
 | `1b38e1d3` | 记录上游 `0.2.119` 候选的 `e5478eff` / `SOURCE_REV=27d2088a`，明确其尚未完成全量隐私审计，暂不视为已同步 | 宗旨 1（隐私边界编译级）+ 宗旨 3（同步状态可追溯） |
+
+| `efe7a0fb` | 选择性合入上游 project-picker 移除、recent-directory dashboard、非项目目录直接启动 session、pre-session model/TUI deferred plumbing；不恢复被 fork 删除的 vendor/外部兼容面或相关遥测 | 宗旨 1（不扩大外部数据面）+ 宗旨 2（保留本地启动、模型选择和 `.agents` 功能）；受影响 pager/shell fmt 已通过，冷编译定向测试受资源时限未完成 |
+| `5e890799` | 修正上游 pre-session model flow：仅更新界面/内存 deferred state，session 创建成功后才持久化 `models.default`，避免失败创建污染用户配置 | 宗旨 1（不无故写入用户配置）+ 宗旨 2（保留模型切换）；fmt 与静态审查通过 |
+| `128c8b39` | 准备 0.2.119 版本、`SOURCE_REV`、文档和锁文件；跟随上游 async-openai `95b52eb` 基线但 pin 到已有 `juya-ai-lab/async-openai@e03c366c`，保留 `action`/`query`/DeepSeek `queries` 兼容，并新增缺字段/复数查询回归测试 | 宗旨 2（Responses/DeepSeek 功能兼容）+ 宗旨 3（依赖来源和验证可追溯）；metadata、受影响 crate check、定向测试、fmt 和 diff 检查通过，依赖仓库无本地改动 |
 
 | 571c2d64 | fix: show full size for partial task output；从上游 0.2.119 候选选择性移植后台任务部分日志的真实总大小提示，仅改 xai-grok-tools 输出格式和测试；不更新版本号或 SOURCE_REV | B1 低风险独立批次：无新增外部通信、遥测、持久化、路径扫描或凭证读取；模型额外看到完整输出字节数，已通过 fmt、针对性测试和 xai-grok-tools 全量 lib 回归；其余 0.2.119 改动仍待全量隐私审计 |
 | `2d4eb18c` | 手工合入 upstream 0.2.119 的 nested checkout watcher 逻辑：识别未声明的 clone/worktree/Sapling checkout，保留 submodule，避免 watcher 覆盖其它 workspace；同时保留 fork 的 vendor hard-deny、symlink 防护和 `.agents/.grok` 可用边界，并修正当前 watcher 根含 `.git` 时的误剪枝风险 | 上游批次 B2-W；宗旨 1（路径/隐私边界优先）+ 宗旨 2（本地 workspace watcher 功能保持）；新增逻辑仅做本地 metadata/git 判断，无上传/遥测/凭证路径；`xai-fsnotify` 定向测试 129 passed、15 ignored，尚未更新版本或 SOURCE_REV |
