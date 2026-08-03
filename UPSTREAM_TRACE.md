@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: d399c4dc (2026-08-04)
+- 本地 HEAD: 4939bf35 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 落后上游 0 提交 / 本 fork 领先 72 提交; 树差异 164 个文件
+- 落后上游 0 提交 / 本 fork 领先 74 提交; 树差异 164 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 164 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -59,6 +59,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 4939bf35 | 2026-08-04 | docs: make artifact selection conditional |
+| e1ac7215 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | d399c4dc | 2026-08-04 | docs: add artifact choices to issue template |
 | 89e3c151 | 2026-08-04 | docs: align issue and release records with repository conventions |
 | 373064d4 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
@@ -181,7 +183,7 @@
 | `8d53f18d` | 将 issue #3 的原始描述、调查、修复和测试证据统一迁移到 GitHub，删除本地 issue 档案，并补充 upstream/fork provenance 模板与预编译安装说明 | 宗旨 3：可追溯协作与单一记录源；不改变隐私边界或运行时行为 |
 | `89e3c151` | 按 `.grok/skills/upstream-trace`、`AGENTS.md` 和 release/npm workflow 收敛 issue 指引、trace 锚点与 npm 版本说明；不改变运行时行为或上游代码 | 宗旨 3：记录可追溯且不把 fork 分发事实误写成上游事实 |
 | `d399c4dc` | 将当前 release matrix 的六个平台二进制、npm/pnpm JS wrapper、源码构建和其他产物纳入 Issue 勾选项；npm/pnpm 明确为同一产品的安装方式 | 宗旨 3：让产物级问题可定位；列表依据本 fork workflow，不扩展上游代码 |
-| `docs: make artifact selection conditional` | 允许源码、配置、文档、CI 或上游同步等非产物问题明确选择“不涉及产物”，并为尚未判断的报告保留独立状态 | 宗旨 3：记录真实范围，不把所有 issue 强行归类为产物问题 |
+| `4939bf35` | 允许源码、配置、文档、CI 或上游同步等非产物问题明确选择“不涉及产物”，并为尚未判断的报告保留独立状态 | 宗旨 3：记录真实范围，不把所有 issue 强行归类为产物问题 |
 
 ### 上游同步记录（未来在此追加）
 
