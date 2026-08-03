@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tracing::{debug, warn};
+use tracing::warn;
 
 use xai_grok_workspace::permission::claude_settings::find_claude_settings_paths;
 
@@ -180,64 +180,6 @@ fn compute_project_hash(cwd: &Path) -> (String, Vec<PathBuf>) {
 }
 
 // Change Detection
-
-/// Check if any Claude settings files have changed since the last import/dismiss.
-///
-/// Returns `true` if:
-/// - Global settings exist and have a different hash than last recorded
-/// - Project settings exist and have a different hash than last recorded
-/// - No import state exists yet but Claude settings files are present
-pub fn has_new_changes(cwd: &Path) -> bool {
-    if !xai_grok_config::CLAUDE_CODE_COMPAT_ENABLED {
-        return false;
-    }
-    let state = load_import_state();
-
-    // Check global scope.
-    let (global_hash, global_paths) = compute_global_hash();
-    let global_files_exist = global_paths.iter().any(|p| p.exists());
-    if global_files_exist {
-        match &state.global {
-            None => {
-                debug!("Claude import: global settings found, no previous import state");
-                return true;
-            }
-            Some(s) if s.last_hash != global_hash => {
-                debug!(
-                    old = %s.last_hash,
-                    new = %global_hash,
-                    "Claude import: global settings changed since last import"
-                );
-                return true;
-            }
-            _ => {}
-        }
-    }
-
-    // Check project scope.
-    let (project_hash, project_paths) = compute_project_hash(cwd);
-    let project_files_exist = project_paths.iter().any(|p| p.exists());
-    if project_files_exist {
-        let cwd_key = cwd.to_string_lossy().to_string();
-        match state.projects.get(&cwd_key) {
-            None => {
-                debug!("Claude import: project settings found, no previous import state");
-                return true;
-            }
-            Some(s) if s.last_hash != project_hash => {
-                debug!(
-                    old = %s.last_hash,
-                    new = %project_hash,
-                    "Claude import: project settings changed since last import"
-                );
-                return true;
-            }
-            _ => {}
-        }
-    }
-
-    false
-}
 
 // State Updates
 
