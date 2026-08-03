@@ -16,13 +16,13 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 040e3044 (2026-08-04)
+- 本地 HEAD: 8d53f18d (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 落后上游 0 提交 / 本 fork 领先 67 提交; 树差异 167 个文件
-- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 167 个文件，应为本地裁剪，需人工核对
+- 落后上游 0 提交 / 本 fork 领先 69 提交; 树差异 164 个文件
+- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 164 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
 ## 上游同步日志
@@ -59,6 +59,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 8d53f18d | 2026-08-04 | docs: migrate issue tracking to GitHub and add issue template |
+| babe3c4e | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 040e3044 | 2026-08-04 | fix: preserve per-entry api_backend for duplicate model slugs |
 | 4267b67a | 2026-08-03 | chore: refresh upstream trace [skip ci] |
 | 31920111 | 2026-08-03 | chore: remove obsolete Claude change detector |
