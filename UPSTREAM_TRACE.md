@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 808628ae (2026-08-04)
+- 本地 HEAD: fd6d6db7 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 1 提交 / 本 fork 领先 109 提交; 树差异 225 个文件
+- 落后上游 1 提交 / 本 fork 领先 112 提交; 树差异 224 个文件
 - 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,9 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| fd6d6db7 | 2026-08-04 | docs: record upstream rpc batch |
+| 19548365 | 2026-08-04 | fix: recognize legacy unknown workspace methods |
+| be32c9a4 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 808628ae | 2026-08-04 | docs: record upstream auth batch |
 | 8eb35738 | 2026-08-04 | fix: repair interactive external auth flow |
 | e45737c1 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
@@ -241,6 +244,7 @@
 | `2d9fbbde` | 直接删除子代理 GCS `subagent.json` 元数据、prompt/permission/turn trace、配置/目录/凭据诊断日志及其上传上下文；保留本地 resume、推理、worktree 生命周期和 watcher 功能；同时为 read-file、AGENTS tracker、LSP workspace-open/root、workspace classifier 增加 vendor-state lexical/full validation，禁止外部 agent 状态进入本地功能边界或外发构造 | 上游 0.2.119 隐私批次；对应隐私工作树提交 `4d2a704d`；`cargo fmt --all -- --check`、`git diff --check`、`xai-grok-shell`/`xai-grok-tools` 检查与定向回归通过；web-search `action`/`query`/`queries` 保护另行核对且未被覆盖 |
 | `8eb35738` | 仅移植 external auth 的两个本地行为修复：交互式 provider 不再收到 headless `GROK_AUTH_EXPIRED=1`，以及调用 `AuthManager::auth()` 前释放同一 auth 文件锁避免嵌套 flock 自阻塞；保留 headless refresh 路径的标记和现有 team/principal pin、凭据持久化流程 | 上游 0.2.119 认证批次；无新增外部 agent 配置读取、上传、relay 或遥测字段；新增交互式 provider 两项测试，另验证 headless refresh 标记测试通过；provider 既有环境继承能力作为后续隐私审计项，不在本批扩大范围 |
 | `19548365` | 增加 workspace RPC unknown-method 新旧 wire shape 的统一识别：接受 `code=unknown_method`，也接受旧 `hub_error` 消息前缀；只扩展错误分类辅助方法和单元测试 | 上游 0.2.119 RPC 兼容批次；不读取路径/配置、不改变 relay payload、不新增上传或遥测 |
+| `fd6d6db7` | 更新 CHANGELOG 与临时审查摘要，记录 RPC unknown-method 兼容批次和验证范围；不改变运行时行为 | 宗旨 3：使用者摘要与维护者决策记录同步 |
 | `1d71aab7` | 更新 fork-level `CHANGELOG.md`，记录上游 0.2.119 分批同步、隐私批次、web-search 兼容保护及尚未处理的版本/tag/产物验证状态；不改变运行时行为 | 宗旨 3：让使用者可读摘要与维护者 trace 同步；上游同步仍未完成，版本与 `SOURCE_REV` 暂不更新 |
 | `808628ae` | 更新 CHANGELOG 与临时审查同步后的认证批次摘要，明确交互式 provider、headless refresh 和锁修复的范围；不改变运行时行为 | 宗旨 3：使用者摘要与维护者决策记录保持同步 |
 | ddbee923 | docs: record incremental upstream batch；刷新生成式 trace 区块并记录 B1 的独立合入、测试和隐私结论 | 宗旨 3：上游分批决策和验证证据可追溯；不改变运行时行为 |
