@@ -17,25 +17,17 @@ assignees: ""
 
 ## Affected artifact / 受影响产物
 
-如果问题涉及实际运行或讨论中的产物，请勾选一个或多个具体产物。以下列表与本 fork 的
-release matrix 和 npm 打包流程保持一致；npm 与 pnpm 是同一个 JS wrapper 的两种安装方式，
-不要重复勾选为两个产品。若问题不涉及产物，或暂时无法判断，请选择对应选项。
+如果问题涉及实际运行或讨论中的产物，请勾选适用项；这不是所有 issue 的必填分类。若问题
+不涉及产物，或暂时无法判断，请选择对应选项。npm 与 pnpm 是同一个 JS wrapper 的两种安装
+方式，不单独区分；直接使用 npm/pnpm 时，若问题也涉及底层平台包，可以同时勾选前两项。
 
-### GitHub Release binary
+### User-facing products
 
-- [ ] `grok-<version>-linux-x86_64`
-- [ ] `grok-<version>-linux-aarch64`
-- [ ] `grok-<version>-macos-x86_64`
-- [ ] `grok-<version>-macos-aarch64`
-- [ ] `grok-<version>-windows-x86_64.exe`
-- [ ] `grok-<version>-windows-aarch64.exe`
+- [ ] Direct platform artifact（GitHub Release binary or platform package；请填写平台/架构）
+- [ ] npm package：`@juya-ai-lab/grok-build`（npm/pnpm 安装的 JS wrapper）
 
-### npm / pnpm package
-
-- [ ] `@juya-ai-lab/grok-build`（JS wrapper + 平台 optional dependency）
-  - Package manager:
-    - [ ] npm
-    - [ ] pnpm
+Current direct platforms: `linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-aarch64`,
+`windows-x86_64`, `windows-aarch64`。
 
 ### Source build and other
 
@@ -48,6 +40,7 @@ Artifact filename, package version, or other identifier:
 
 ```text
 artifact:
+platform/arch:
 version/tag:
 ```
 

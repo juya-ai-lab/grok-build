@@ -184,6 +184,7 @@
 | `89e3c151` | 按 `.grok/skills/upstream-trace`、`AGENTS.md` 和 release/npm workflow 收敛 issue 指引、trace 锚点与 npm 版本说明；不改变运行时行为或上游代码 | 宗旨 3：记录可追溯且不把 fork 分发事实误写成上游事实 |
 | `d399c4dc` | 将当前 release matrix 的六个平台二进制、npm/pnpm JS wrapper、源码构建和其他产物纳入 Issue 勾选项；npm/pnpm 明确为同一产品的安装方式 | 宗旨 3：让产物级问题可定位；列表依据本 fork workflow，不扩展上游代码 |
 | `4939bf35` | 允许源码、配置、文档、CI 或上游同步等非产物问题明确选择“不涉及产物”，并为尚未判断的报告保留独立状态 | 宗旨 3：记录真实范围，不把所有 issue 强行归类为产物问题 |
+| `docs: simplify artifact choices in issue template` | 将产物勾选收敛为“直接平台产物”和 npm package 两个用户可见类别；保留平台/架构文本字段，不再细分 npm 与 pnpm | 宗旨 3：分类足够定位问题，同时避免模板过度细化 |
 
 ### 上游同步记录（未来在此追加）
 
