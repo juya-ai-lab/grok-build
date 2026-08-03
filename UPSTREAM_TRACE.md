@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 3cc9a6cd (2026-08-03)
+- 本地 HEAD: 31920111 (2026-08-03)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 落后上游 0 提交 / 本 fork 领先 62 提交; 树差异 162 个文件
+- 落后上游 0 提交 / 本 fork 领先 65 提交; 树差异 162 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 162 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -59,6 +59,9 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 31920111 | 2026-08-03 | chore: remove obsolete Claude change detector |
+| 9688db9a | 2026-08-03 | chore: refresh upstream trace [skip ci] |
+| 1c1f6956 | 2026-08-03 | chore: refresh upstream trace [skip ci] |
 | 3cc9a6cd | 2026-08-03 | fix: restore debug tracing import for Claude import state |
 | f45b3fd4 | 2026-08-03 | chore: refresh upstream trace [skip ci] |
 | 4034e5a6 | 2026-08-03 | docs: record upstream merge decisions and collaboration context |
@@ -160,6 +163,7 @@
 | `903a6c66` `b062b230` `ede7b088` `f9f64558` `9d9e509f` | npm 分发：发布预编译二进制、暴露 `grok` 命令、版本/dist-tag 覆盖、资产/包版本解耦、E409 重试 | 分发渠道：npm/pnpm 全局安装 |
 | `6a48278d` | 合入 upstream `0.2.118` / `SOURCE_REV=64c4de99`；冲突文件按 AGENTS.md 重新应用隐私裁剪，保留 fork CI，并对新增资源遥测发送路径加聚合遥测编译门控 | 上游合并规则 + 宗旨 1（隐私边界编译级）；全量 cargo check 因资源风险停止，已完成 fmt 与轻量 metadata 验证 |
 | `3cc9a6cd` | 修复上游合并冲突遗漏的 `tracing::debug` 导入；CI Release 在 6 个平台均于 `xai-grok-shell` 编译阶段报同一错误，补回导入后将 `v0.2.118` 移到此代码提交 | 修复 release 阻断的确定性编译错误；不改变隐私边界或功能行为 |
+| `31920111` | 删除上游 `780d1388` 已移除且 fork 当前无调用者的 `has_new_changes`；保留 `CLAUDE_CODE_COMPAT_ENABLED=false` 的隐私门控 | 对齐上游并清理无效兼容代码；不改变默认功能或隐私边界 |
 | `4034e5a6` | 记录跨模型协作时以当前指令、仓库事实和决策文档为准；补充本次 async-openai 上游复核结论 | 宗旨 3（协作上下文与判断性决策可追溯），不重新引入模型身份切换描述 |
 | `d9fc97cd` `777fbf46` `d62623a1` | 容忍流式 web_search 缺 `action`/`query`、支持 DeepSeek 复数 `queries` | async-openai 临时镜像兼容层（见「临时事项」） |
 | `780d1388` / `our-forks@884aff` / `juya@e03c366` | 上游同步后的 async-openai 复核：`our-forks` 已吸收 `action` 可选，但仍缺 `query` 可选和 DeepSeek `queries`；`juya@e03c366` 只是合并已有 `7defed8` 内容 | 保留 `juya-ai-lab/async-openai@7defed8` 内容 pin，避免恢复后重新出现 `missing field query` 与 DeepSeek `missing field queries`；待剩余两项上游化后再移除 |
