@@ -19,6 +19,7 @@
 ### Distribution and maintenance
 
 - README 增加 GitHub Releases 与 npm/pnpm 预编译安装说明，两种方式均为可选渠道。
+- README 开头声明本 fork 特有文档，并用 `JUYA FORK MAINTAINED` / `UPSTREAM-CARRIED` 标记分隔 fork 说明与上游带来的内容。
 - 建立 GitHub Issue 模板、来源/冲突/产物验证标签规则，并将 Issue #3 作为该问题的单一记录源。
 - 删除本地 `juya-issue/` 档案，避免本地记录与 GitHub Issue 漂移。
 

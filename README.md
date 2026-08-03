@@ -1,7 +1,20 @@
+<!-- JUYA FORK MAINTAINED:BEGIN -->
+
+> [!IMPORTANT]
+> **本 fork 的文档边界**：本 README 保留上游的产品介绍和源码构建说明，同时在明确标记的区域补充本 fork 的隐私、分发和协作信息。
+>
+> 本 fork 特有的维护文档包括：[CHANGELOG.md](CHANGELOG.md)（面向使用者的变更摘要）、[UPSTREAM_TRACE.md](UPSTREAM_TRACE.md)（上游同步事实与决策记录）、[AGENTS.md](AGENTS.md)（维护约定）、[CONTRIBUTING.md](CONTRIBUTING.md)（协作与 issue 规则），以及 [.github/ISSUE_TEMPLATE/](.github/ISSUE_TEMPLATE/)（issue 模板）。
+>
+> README 中的 `JUYA FORK MAINTAINED` 区域由本 fork 维护；`UPSTREAM-CARRIED` 区域以同步的上游内容为基础。上游版本和 `SOURCE_REV` 以 [UPSTREAM_TRACE.md](UPSTREAM_TRACE.md) 为准，fork 特有变更则记录在 [CHANGELOG.md](CHANGELOG.md) 中。
+
 > [!NOTE]
 > 本构建硬禁用 Claude/Codex/Cursor 兼容、自动会话/工作区制品上传、relay 同步，以及 external OTEL 中的提示词和工具详情字段；聚合元数据遥测、错误报告和反馈路径也在源码中固定关闭。原版 Grok 已有的 `.agents/skills` 与 `.agents/commands` 支持仍保留；OAuth 登录和正常推理不受影响。
 
 > **预编译安装方式可任选**：可以从 [GitHub Releases](https://github.com/juya-ai-lab/grok-build/releases) 下载对应平台二进制，也可以使用 npm/pnpm 全局安装预编译包；两种方式都不需要本地编译。
+
+<!-- JUYA FORK MAINTAINED:END -->
+
+<!-- UPSTREAM-CARRIED:BEGIN -->
 
 <div align="center">
 
@@ -42,6 +55,10 @@ for the version of the code present in this tree.
 
 </div>
 
+<!-- UPSTREAM-CARRIED:END -->
+
+<!-- JUYA FORK MAINTAINED:BEGIN -->
+
 ---
 
 ## Installing a prebuilt release
@@ -77,6 +94,10 @@ npm 的可用版本以 registry 中已发布的版本为准；GitHub tag 不等�
 ```sh
 npm install -g @juya-ai-lab/grok-build@0.2.118
 ```
+
+<!-- JUYA FORK MAINTAINED:END -->
+
+<!-- UPSTREAM-CARRIED:BEGIN -->
 
 ## Building from source
 
@@ -165,3 +186,5 @@ Third-party and vendored code remains under its original licenses. See:
   — crate-local notice for the codex and opencode ports (license texts +
   Apache §4(b) change notice)
 - [`third_party/NOTICE`](third_party/NOTICE) — vendored Mermaid-stack index
+
+<!-- UPSTREAM-CARRIED:END -->
