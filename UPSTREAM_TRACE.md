@@ -177,6 +177,7 @@
 | `040e3044` | 修复同一实际 model slug 下显式 `api_backend` 被 sibling propagation 覆盖的问题，并覆盖 `[model.*]` 与 `[model_providers.*]` 两种配置来源 | JUYA-ISSUE-001；保持显式 provider 路由独立，同时保留未显式配置 backend 的兼容继承行为 |
 | `8d53f18d` | 将 issue #3 的原始描述、调查、修复和测试证据统一迁移到 GitHub，删除本地 issue 档案，并补充 upstream/fork provenance 模板与预编译安装说明 | 宗旨 3：可追溯协作与单一记录源；不改变隐私边界或运行时行为 |
 | `docs: align issue and release records with repository conventions` | 按 `.grok/skills/upstream-trace`、`AGENTS.md` 和 release/npm workflow 收敛 issue 指引、trace 锚点与 npm 版本说明；不改变运行时行为或上游代码 | 宗旨 3：记录可追溯且不把 fork 分发事实误写成上游事实 |
+| `docs: add artifact choices to issue template` | 将当前 release matrix 的六个平台二进制、npm/pnpm JS wrapper、源码构建和其他产物纳入 Issue 勾选项；npm/pnpm 明确为同一产品的安装方式 | 宗旨 3：让产物级问题可定位；列表依据本 fork workflow，不扩展上游代码 |
 
 ### 上游同步记录（未来在此追加）
 

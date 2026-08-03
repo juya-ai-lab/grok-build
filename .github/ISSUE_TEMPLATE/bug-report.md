@@ -15,6 +15,39 @@ assignees: ""
 - [ ] `both`：上游和本 fork 都受影响，但处理方式可能不同
 - [ ] `unknown`：尚未确定，调查后补充
 
+## Affected artifact / 受影响产物
+
+请至少勾选一个实际运行或讨论中的产物。以下列表与本 fork 的 release matrix 和
+npm 打包流程保持一致；npm 与 pnpm 是同一个 JS wrapper 的两种安装方式，不要重复勾选为两个产品。
+
+### GitHub Release binary
+
+- [ ] `grok-<version>-linux-x86_64`
+- [ ] `grok-<version>-linux-aarch64`
+- [ ] `grok-<version>-macos-x86_64`
+- [ ] `grok-<version>-macos-aarch64`
+- [ ] `grok-<version>-windows-x86_64.exe`
+- [ ] `grok-<version>-windows-aarch64.exe`
+
+### npm / pnpm package
+
+- [ ] `@juya-ai-lab/grok-build`（JS wrapper + 平台 optional dependency）
+  - Package manager:
+    - [ ] npm
+    - [ ] pnpm
+
+### Source build and other
+
+- [ ] Source build（例如 `cargo build` 或本地 checkout）
+- [ ] Other / unknown：
+
+Artifact filename, package version, or other identifier:
+
+```text
+artifact:
+version/tag:
+```
+
 ## Version and commit provenance / 版本与提交来源
 
 | | Upstream | This fork |
