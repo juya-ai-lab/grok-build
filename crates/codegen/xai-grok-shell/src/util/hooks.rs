@@ -7,7 +7,7 @@ use xai_grok_hooks::discovery::HookSource;
 use xai_grok_hooks::error::HookError;
 
 /// Owned paths for hook sources. Callers borrow via `as_sources()`.
-pub struct HookSourcePaths {
+pub(crate) struct HookSourcePaths {
     pub global: Vec<PathBuf>,
     pub project: Vec<PathBuf>,
 }
@@ -72,7 +72,7 @@ fn include_cursor_hooks(compat: &xai_grok_tools::types::compat::CompatConfig) ->
 
 /// Global + project hook source paths. Registry file is never a discovery
 /// source; compatible vendor globals are appended when their gates are on.
-pub fn discover_hook_source_paths(
+pub(crate) fn discover_hook_source_paths(
     git_root: Option<&Path>,
     compat: &xai_grok_tools::types::compat::CompatConfig,
 ) -> HookSourcePaths {
@@ -157,7 +157,7 @@ pub fn discover_hooks(
 /// dedup in [`xai_grok_hooks::discovery::registry_from_specs_deduped`], a config
 /// hook wins over a byte-identical file hook. `config_layers` is a parameter (not
 /// read here) so tests can drive it with hand-built layers.
-pub fn assemble_hooks(
+pub(crate) fn assemble_hooks(
     config_layers: &[xai_grok_config::HookConfigLayer],
     git_root: Option<&Path>,
     compat: &xai_grok_tools::types::compat::CompatConfig,
