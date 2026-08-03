@@ -180,7 +180,7 @@
 |---|---|---|---|
 | async-openai 临时镜像 | 继续 pin `juya-ai-lab/async-openai@7defed8`（镜像 xAI fork 基座 `95b52eb` + `action`/`query` 可选及 DeepSeek 复数 `queries` backport） | 上游同时具备三项兼容能力后对齐并移除；当前 `our-forks@884aff` 只解决 `action` | AGENTS.md「async-openai 依赖」 |
 | CI token 到期 | release / dist 用 token 的到期日集中登记 | release/dist workflow 启动时检查：≤30 天 warning，过期 fail；换 token 时同步更新 | `.github/token-expiry.env` |
-| 上游 0.2.119 待全量隐私审计 | `upstream/main=e5478eff`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`；相对 `780d1388` 涉及 72 个文件，包含新增技能触发遥测和 watcher 改动 | 完成整个 diff、调用链、依赖及发布路径审计，重新应用隐私裁剪并验证后，才能决定是否合入 | 上游同步候选；当前未合入 |
+| 上游 0.2.119 选择性同步仍待收尾 | `upstream/main=e5478eff`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`；相对 `780d1388` 的 72 个文件已完成第一轮全量 diff/调用链/依赖/发布路径审计，并选择性合入 B1、B2、隐私、认证和 RPC 批次 | 继续保留并验证 fork 隐私边界；project-picker/model/TUI、SkillTrigger external telemetry、上游版本/lock/release 文档仍需单独决定，完成前不更新版本或 SOURCE_REV | 上游同步候选；当前为选择性同步 |
 
 ## 注意事项
 
