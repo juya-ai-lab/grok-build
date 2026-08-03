@@ -16,13 +16,13 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: bfa46df (2026-08-03)
+- 本地 HEAD: 5aa7750 (2026-08-03)
 - 版本: 0.2.117
 - 上游基线 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
 - 上游 upstream/main: a422116 (2026-07-31, Synced from monorepo)
 - 上游 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
-- 落后上游 17 提交 / 本 fork 领先 13 提交; 树差异 155 个文件
-- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 155 个文件，应为本地裁剪，需人工核对
+- 落后上游 0 提交 / 本 fork 领先 52 提交; 树差异 159 个文件
+- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 159 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
 ## 上游同步日志
@@ -58,6 +58,7 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 5aa7750 | 2026-08-03 | chore: add script-driven upstream trace with CI auto-refresh and coverage check |
 | bfa46df | 2026-08-03 | docs: add npm/pnpm global install note to README |
 | 9d9e509 | 2026-08-02 | ci(npm): retry E409 registry race and tolerate tombstoned versions |
 | d62623a | 2026-08-01 | fix: support DeepSeek plural web search queries |
@@ -71,6 +72,44 @@
 | 1b61150 | 2026-08-01 | ci: satisfy shellcheck in release notes generation |
 | dac1977 | 2026-08-01 | ci: fix macOS checksum and dedupe release notes |
 | 2175302 | 2026-08-01 | ci: use dedicated token for release creation |
+| 64b5d14 | 2026-08-01 | ci: satisfy shellcheck in sccache env setup |
+| 4377dcc | 2026-08-01 | ci: cap sccache cache size to fit repo cache budget |
+| 98d31e8 | 2026-08-01 | ci: publish release assets per platform as they finish |
+| 0838904 | 2026-08-01 | ci: resolve format check toolchain from rust-toolchain.toml |
+| 0172b44 | 2026-08-01 | Merge branch port/upstream-0.2.117 into main |
+| 15c8c61 | 2026-08-01 | ci: let format check follow the repository toolchain |
+| f8ebdfb | 2026-08-01 | port: merge upstream 0.2.117 sync with privacy trims |
+| 401a086 | 2026-08-01 | docs: add AGENTS.md capturing fork principles and merge rules |
+| 353933d | 2026-08-01 | ci: skip sccache on Windows and upgrade actions/cache to node24 |
+| 35102ee | 2026-08-01 | ci: separate manual dispatch runs in concurrency groups |
+| 60e0d84 | 2026-08-01 | ci: pin zizmor/cargo-deny versions and scope release concurrency |
+| 5a88ec7 | 2026-08-01 | ci: cache tool downloads and rust toolchain in lint jobs |
+| 6eb2edd | 2026-08-01 | ci: harden workflows and add dependency audit checks |
+| 634a3dc | 2026-08-01 | ci: keep the check workflow to formatting only |
+| 0bcc231 | 2026-08-01 | ci: add lightweight fmt/check workflow |
+| 7c1d67e | 2026-08-01 | ci: cap sccache size per release target |
+| de0a82a | 2026-08-01 | ci: fail manual releases when the tag points elsewhere |
+| e844fba | 2026-08-01 | ci: print sccache stats after release builds |
+| a402686 | 2026-08-01 | ci: cache protoc installs across release runs |
+| 76cb0a3 | 2026-08-01 | ci: cache release compiles with sccache |
+| 983a855 | 2026-08-01 | ci: create release tag up front and share resolved version |
+| 1e6f082 | 2026-07-31 | ci: make version crate manifest path configurable |
+| 80c0b81 | 2026-07-31 | ci: derive manual release tag from the crate version |
+| 18ed28f | 2026-07-31 | Merge branch 'ci/tag-release' into main |
+| 987822f | 2026-07-31 | Merge branch 'port-upstream' into main |
+| 3c17dd0 | 2026-07-31 | ci: auto-resolve latest tag for manual release runs |
+| d286045 | 2026-07-31 | ci: allow manual release runs via a tag input |
+| 2074bb9 | 2026-07-31 | ci: support manual release re-run via workflow_dispatch |
+| 38f87fa | 2026-07-31 | style: run cargo fmt --all on the merged port |
+| f36387f | 2026-07-31 | port: add privacy-fork CI files |
+| 8afeb2c | 2026-07-31 | port: pager, docs, README, upstream surface audit |
+| 422ee9b | 2026-07-31 | port: remove Claude/Codex/Cursor compatibility surfaces |
+| bff0968 | 2026-07-31 | port: gate telemetry, uploads, feedback, error reporting and their consumers |
+| 6d0bfa9 | 2026-07-31 | port: compile-time kill switches, path validators, relay gates, deps |
+| 2eed7e7 | 2026-07-20 | ci: add multi-platform GitHub Actions release workflow |
+| a5c85ba | 2026-07-20 | style: apply rustfmt to privacy-gate follow-up edits |
+| 4a6004e | 2026-07-19 | Harden privacy boundaries and preserve shared agent commands |
+| 7190b3f | 2026-07-19 | Disable vendor compatibility and content uploads |
 <!-- TRACE:fork:END -->
 
 ## 临时事项与到期项
