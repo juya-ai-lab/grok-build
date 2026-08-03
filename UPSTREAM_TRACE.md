@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 8a5805cc (2026-08-04)
+- 本地 HEAD: a0fd99af (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 落后上游 0 提交 / 本 fork 领先 76 提交; 树差异 164 个文件
+- 落后上游 0 提交 / 本 fork 领先 78 提交; 树差异 164 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 164 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -59,6 +59,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| a0fd99af | 2026-08-04 | docs: list selectable artifact variants in issue template |
+| f045babb | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 8a5805cc | 2026-08-04 | docs: simplify artifact choices in issue template |
 | df0dac6b | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 4939bf35 | 2026-08-04 | docs: make artifact selection conditional |
@@ -187,7 +189,7 @@
 | `d399c4dc` | 将当前 release matrix 的六个平台二进制、npm/pnpm JS wrapper、源码构建和其他产物纳入 Issue 勾选项；npm/pnpm 明确为同一产品的安装方式 | 宗旨 3：让产物级问题可定位；列表依据本 fork workflow，不扩展上游代码 |
 | `4939bf35` | 允许源码、配置、文档、CI 或上游同步等非产物问题明确选择“不涉及产物”，并为尚未判断的报告保留独立状态 | 宗旨 3：记录真实范围，不把所有 issue 强行归类为产物问题 |
 | `8a5805cc` | 将产物勾选收敛为“直接平台产物”和 npm package 两个用户可见类别；保留平台/架构文本字段，不再细分 npm 与 pnpm | 宗旨 3：分类足够定位问题，同时避免模板过度细化 |
-| `docs: list selectable artifact variants in issue template` | 将六个 release 平台二进制恢复为直接可勾选项，npm/pnpm 仍合并为一个 npm package 选项；特殊产物继续通过 Other 和正文补充 | 宗旨 3：让常见产物可直接归类，同时保留非产物和特殊情况入口 |
+| `a0fd99af` | 将六个 release 平台二进制恢复为直接可勾选项，npm/pnpm 仍合并为一个 npm package 选项；特殊产物继续通过 Other 和正文补充 | 宗旨 3：让常见产物可直接归类，同时保留非产物和特殊情况入口 |
 
 ### 上游同步记录（未来在此追加）
 
