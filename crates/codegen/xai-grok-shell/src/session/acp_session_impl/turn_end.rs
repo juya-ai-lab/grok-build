@@ -88,15 +88,21 @@ impl SessionActor {
         let cwd = self.tool_context.cwd.as_path();
 
         // `get_worktree_info` doubles as the "in a git repo?" probe (None when not).
-        let (worktree_info, branch) = tokio::join!(
+        let (worktree_info, branch, commit) = tokio::join!(
             xai_grok_workspace::session::git::get_worktree_info(cwd),
             xai_grok_workspace::session::git::get_branch(cwd),
+            xai_grok_workspace::session::git::get_current_commit(cwd),
         );
         let Some((is_worktree, main_repo)) = worktree_info else {
             return;
         };
 
-        let dedup_key = git_head_dedup_key(branch.as_deref(), is_worktree, main_repo.as_deref());
+        let dedup_key = git_head_dedup_key(
+            branch.as_deref(),
+            is_worktree,
+            main_repo.as_deref(),
+            commit.as_deref(),
+        );
         {
             let mut last = self.last_reported_branch.lock();
             if last.as_deref() == Some(&dedup_key) {
