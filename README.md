@@ -1,13 +1,7 @@
 > [!NOTE]
 > 本构建硬禁用 Claude/Codex/Cursor 兼容、自动会话/工作区制品上传、relay 同步，以及 external OTEL 中的提示词和工具详情字段；聚合元数据遥测、错误报告和反馈路径也在源码中固定关闭。原版 Grok 已有的 `.agents/skills` 与 `.agents/commands` 支持仍保留；OAuth 登录和正常推理不受影响。
 
-> **npm/pnpm 全局安装**：也提供预编译二进制 npm 包，可全局安装（无需编译，自动拉取对应平台二进制）：
->
-> ```sh
-> npm install -g @juya-ai-lab/grok-build
-> # 或
-> pnpm add -g @juya-ai-lab/grok-build
-> ```
+> **预编译安装方式可任选**：可以从 [GitHub Releases](https://github.com/juya-ai-lab/grok-build/releases) 下载对应平台二进制，也可以使用 npm/pnpm 全局安装预编译包；两种方式都不需要本地编译。
 
 <div align="center">
 
@@ -27,7 +21,7 @@ commands, searches the web, and manages long-running tasks — interactively,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
-[Installing the released binary](#installing-the-released-binary) ·
+[Installing a prebuilt release](#installing-a-prebuilt-release) ·
 [Building from source](#building-from-source) ·
 [Documentation](#documentation) ·
 [Repository layout](#repository-layout) ·
@@ -49,18 +43,35 @@ for the version of the code present in this tree.
 
 ---
 
-## Installing the released binary
+## Installing a prebuilt release
 
-Prebuilt binaries are published for macOS, Linux, and Windows:
+预编译安装方式可任选，均不要求本地编译。
+
+### GitHub Releases
+
+从 [GitHub Releases](https://github.com/juya-ai-lab/grok-build/releases) 选择版本，下载与操作系统和 CPU 架构匹配的资产。资产命名格式为：
+
+```text
+grok-<version>-<platform>-<arch>[.exe]
+```
+
+例如 Linux x86_64、Linux aarch64、macOS x86_64、macOS aarch64，以及 Windows x86_64/aarch64 均有对应资产；同时下载同名 `.sha256` 文件并校验后再运行。下载后将文件命名为 `grok`（Windows 保留 `.exe`）并放入 `PATH`，然后运行：
 
 ```sh
-curl -fsSL https://x.ai/cli/install.sh | bash   # macOS / Linux / Git Bash
-irm https://x.ai/cli/install.ps1 | iex          # Windows PowerShell
 grok --version
 ```
 
-See the [changelog](https://x.ai/build/changelog) for the latest fixes,
-features, and improvements in each release.
+### npm / pnpm
+
+npm/pnpm 包同样提供预编译二进制，并通过 optional dependencies 自动选择当前平台：
+
+```sh
+npm install -g @juya-ai-lab/grok-build
+# 或
+pnpm add -g @juya-ai-lab/grok-build
+```
+
+需要固定版本时，在包名后追加版本号，例如 `@juya-ai-lab/grok-build@0.2.118-fix1`。
 
 ## Building from source
 

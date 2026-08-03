@@ -7,6 +7,15 @@ SpaceXAI develops this software internally. The public tree is published for
 source transparency and local builds under the terms of the Apache License,
 Version 2.0 (see [`LICENSE`](LICENSE)).
 
+## Bug reports and compatibility issues
+
+Use the repository's GitHub issue form for reproducible bugs and compatibility
+reports. Select the applicable scope (`upstream-originated`, `fork-specific`,
+or `both`) and record the upstream and fork version/tag, commit, commit URL,
+and validation status separately. The GitHub issue is the canonical record;
+keep it open until the stated artifact-level validation and other close
+criteria are complete.
+
 ## Security reports
 
 Please report security issues through the process described in
