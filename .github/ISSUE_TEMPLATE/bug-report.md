@@ -19,7 +19,7 @@ assignees: ""
 
 如果问题涉及实际运行或讨论中的产物，请勾选适用项；这不是所有 issue 的必填分类。若问题
 不涉及产物，或暂时无法判断，请选择对应选项。npm 与 pnpm 是同一个 JS wrapper 的两种安装
-方式，不单独区分。如果问题同时影响直接平台产物和 npm package，可以分别勾选。
+方式，不单独区分。npm/pnpm 的安装信息请按下方说明写入正文。
 
 ### Direct platform artifacts
 
@@ -30,9 +30,11 @@ assignees: ""
 - [ ] Direct platform artifact — `grok-<version>-windows-x86_64.exe`
 - [ ] Direct platform artifact — `grok-<version>-windows-aarch64.exe`
 
-### npm package
+### npm / pnpm note
 
-- [ ] `@juya-ai-lab/grok-build`（npm/pnpm 安装的 JS wrapper）
+`@juya-ai-lab/grok-build` 是 npm/pnpm 安装的 JS wrapper，不作为本节的独立产物选项。
+如果问题通过 npm/pnpm 复现，请在 Summary 或 Reproduction 中写明安装方式、包版本，
+以及是否同时使用了底层平台产物。
 
 ### Source build and other
 
