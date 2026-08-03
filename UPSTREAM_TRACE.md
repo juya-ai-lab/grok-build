@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 2d9fbbde (2026-08-04)
+- 本地 HEAD: 1d71aab7 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 1 提交 / 本 fork 领先 105 提交; 树差异 226 个文件
+- 落后上游 1 提交 / 本 fork 领先 106 提交; 树差异 226 个文件
 - 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,7 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 1d71aab7 | 2026-08-04 | docs: record upstream 0.2.119 privacy batch |
 | 2d9fbbde | 2026-08-04 | fix: remove path-bearing subagent upload paths |
 | 8f44c60b | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 10bb1a81 | 2026-08-04 | docs: record subagent watcher batch |
@@ -235,6 +236,7 @@
 | `4f44478f` | 记录 B2-W、B2-GH 的实现、测试和隐私裁剪证据；不改变运行时行为 | 宗旨 3：让每个选择性上游批次的证据可追溯 |
 | `10bb1a81` | 记录 B2-SW 的实现、测试和隐私裁剪证据；不改变运行时行为 | 宗旨 3：让每个选择性上游批次的证据可追溯 |
 | `2d9fbbde` | 直接删除子代理 GCS `subagent.json` 元数据、prompt/permission/turn trace、配置/目录/凭据诊断日志及其上传上下文；保留本地 resume、推理、worktree 生命周期和 watcher 功能；同时为 read-file、AGENTS tracker、LSP workspace-open/root、workspace classifier 增加 vendor-state lexical/full validation，禁止外部 agent 状态进入本地功能边界或外发构造 | 上游 0.2.119 隐私批次；对应隐私工作树提交 `4d2a704d`；`cargo fmt --all -- --check`、`git diff --check`、`xai-grok-shell`/`xai-grok-tools` 检查与定向回归通过；web-search `action`/`query`/`queries` 保护另行核对且未被覆盖 |
+| `1d71aab7` | 更新 fork-level `CHANGELOG.md`，记录上游 0.2.119 分批同步、隐私批次、web-search 兼容保护及尚未处理的版本/tag/产物验证状态；不改变运行时行为 | 宗旨 3：让使用者可读摘要与维护者 trace 同步；上游同步仍未完成，版本与 `SOURCE_REV` 暂不更新 |
 | ddbee923 | docs: record incremental upstream batch；刷新生成式 trace 区块并记录 B1 的独立合入、测试和隐私结论 | 宗旨 3：上游分批决策和验证证据可追溯；不改变运行时行为 |
 
 ### 上游同步记录（未来在此追加）
