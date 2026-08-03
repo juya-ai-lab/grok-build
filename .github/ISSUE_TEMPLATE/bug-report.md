@@ -17,8 +17,9 @@ assignees: ""
 
 ## Affected artifact / 受影响产物
 
-请至少勾选一个实际运行或讨论中的产物。以下列表与本 fork 的 release matrix 和
-npm 打包流程保持一致；npm 与 pnpm 是同一个 JS wrapper 的两种安装方式，不要重复勾选为两个产品。
+如果问题涉及实际运行或讨论中的产物，请勾选一个或多个具体产物。以下列表与本 fork 的
+release matrix 和 npm 打包流程保持一致；npm 与 pnpm 是同一个 JS wrapper 的两种安装方式，
+不要重复勾选为两个产品。若问题不涉及产物，或暂时无法判断，请选择对应选项。
 
 ### GitHub Release binary
 
@@ -40,6 +41,8 @@ npm 打包流程保持一致；npm 与 pnpm 是同一个 JS wrapper 的两种安
 
 - [ ] Source build（例如 `cargo build` 或本地 checkout）
 - [ ] Other / unknown：
+- [ ] Not artifact-related / 不涉及产物
+- [ ] Not yet determined / 尚未确定
 
 Artifact filename, package version, or other identifier:
 
