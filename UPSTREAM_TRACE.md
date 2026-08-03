@@ -16,13 +16,13 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: b6d5a672 (2026-08-04)
+- 本地 HEAD: 4e5100d5 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
-- 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
-- 落后上游 0 提交 / 本 fork 领先 90 提交; 树差异 165 个文件
-- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 165 个文件，应为本地裁剪，需人工核对
+- 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
+- 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
+- 落后上游 1 提交 / 本 fork 领先 92 提交; 树差异 225 个文件
+- 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
 <!-- TRACE:status:END -->
 
 ## 上游同步日志
@@ -32,6 +32,7 @@
 <!-- TRACE:sync:BEGIN -->
 | 上游提交 | 日期 | 内容 | SOURCE_REV |
 |---|---|---|---|
+| e5478eff | 2026-08-03 | Synced from monorepo | 27d2088ae3b3f25e9ddab462caa18a07005ada9a |
 | 780d1388 | 2026-08-03 | Synced from monorepo | 64c4de99cc822b25ce9c54ab5a4f372093d0885d |
 | a4221165 | 2026-07-31 | Synced from monorepo | 8d69c91f02bcacf01e98d5aebbf2f92547c45738 |
 | dd04f397 | 2026-07-30 | Synced from monorepo | 2a28b4a86cfc4a4c133c35b7fc2a6a9964387c39 |
@@ -59,6 +60,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 4e5100d5 | 2026-08-04 | docs: require full privacy audit for upstream sync |
+| 427e4490 | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | b6d5a672 | 2026-08-04 | docs: mark fork and upstream README sections |
 | 8c9f55da | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 85c12155 | 2026-08-04 | docs: add fork changelog with upstream provenance |
@@ -208,7 +211,7 @@
 | `00e900c7` | 增加 `upstream-originated`、`upstream-conflict`、`fork-specific` 和 `needs-artifact-validation` 标签定义；模板仅默认通用 `bug`，scope/status 标签由维护者按证据添加 | 宗旨 3：让问题来源、fork/上游冲突和产物验证状态可筛选且不被模板预设误导 |
 | `85c12155` | 新增根目录 fork-level `CHANGELOG.md`，面向使用者记录修复/分发变更，并要求上游条目同时写明版本、commit、`SOURCE_REV` 和本 fork 同步 commit；详细证据仍集中在 `UPSTREAM_TRACE.md` | 宗旨 3：使用者可读的变更摘要与维护者追踪记录分层，避免把 fork 变更误写成上游变更 |
 | `b6d5a672` | README 开头声明本 fork 特有的根目录文档，并用 `JUYA FORK MAINTAINED` / `UPSTREAM-CARRIED` 标记分隔 fork 说明与上游带来的内容 | 宗旨 3：同步上游 README 时能识别维护边界，避免覆盖隐私、分发和协作说明 |
-| `AGENTS`（待本次提交锚定） | 将上游同步的隐私审计范围提升为整个 diff、调用链、依赖、构建与发布路径，不以历史裁剪清单替代全量审计；未决项需记录并暂停合入 | 宗旨 1（隐私边界编译级）+ 宗旨 3（同步决策可追溯） |
+| `4e5100d5` | 将上游同步的隐私审计范围提升为整个 diff、调用链、依赖、构建与发布路径，不以历史裁剪清单替代全量审计；未决项需记录并暂停合入 | 宗旨 1（隐私边界编译级）+ 宗旨 3（同步决策可追溯） |
 
 ### 上游同步记录（未来在此追加）
 
