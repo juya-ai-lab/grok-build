@@ -16,13 +16,13 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 59f2c19d (2026-08-03)
-- 版本: 0.2.117
-- 上游基线 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
-- 上游 upstream/main: a4221165 (2026-07-31, Synced from monorepo)
-- 上游 SOURCE_REV: 8d69c91f02bcacf01e98d5aebbf2f92547c45738
-- 落后上游 0 提交 / 本 fork 领先 57 提交; 树差异 159 个文件
-- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 159 个文件，应为本地裁剪，需人工核对
+- 本地 HEAD: 6a48278d (2026-08-03)
+- 版本: 0.2.118
+- 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
+- 上游 upstream/main: 780d1388 (2026-08-03, Synced from monorepo)
+- 上游 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
+- 落后上游 0 提交 / 本 fork 领先 59 提交; 树差异 162 个文件
+- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 162 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
 ## 上游同步日志
@@ -32,6 +32,7 @@
 <!-- TRACE:sync:BEGIN -->
 | 上游提交 | 日期 | 内容 | SOURCE_REV |
 |---|---|---|---|
+| 780d1388 | 2026-08-03 | Synced from monorepo | 64c4de99cc822b25ce9c54ab5a4f372093d0885d |
 | a4221165 | 2026-07-31 | Synced from monorepo | 8d69c91f02bcacf01e98d5aebbf2f92547c45738 |
 | dd04f397 | 2026-07-30 | Synced from monorepo | 2a28b4a86cfc4a4c133c35b7fc2a6a9964387c39 |
 | 500129c7 | 2026-07-29 | Synced from monorepo | 6372e41d828b8a6ee82c29e01a69e27ec895cca9 |
@@ -58,6 +59,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 6a48278d | 2026-08-03 | Merge upstream 0.2.118 sync with privacy trims |
+| a49a236d | 2026-08-03 | chore: refresh upstream trace [skip ci] |
 | 59f2c19d | 2026-08-03 | chore: update upstream trace |
 | a26df1c1 | 2026-08-03 | fix: make trace coverage check robust to short-sha length |
 | 0af2361f | 2026-08-03 | chore: refresh upstream trace [skip ci] |
@@ -121,7 +124,7 @@
 
 | 事项 | 内容 | 触发条件/到期 | 指针 |
 |---|---|---|---|
-| async-openai 临时镜像 | pin 到 `juya-ai-lab/async-openai`（镜像 xAI fork 基座 `95b52eb` + #548 backport，兼容 DeepSeek 复数 `queries`） | 上游升级/修复后对齐并移除 | AGENTS.md「async-openai 依赖」 |
+| async-openai 临时镜像 | 继续 pin `juya-ai-lab/async-openai@7defed8`（镜像 xAI fork 基座 `95b52eb` + `action`/`query` 可选及 DeepSeek 复数 `queries` backport） | 上游同时具备三项兼容能力后对齐并移除；当前 `our-forks@884aff` 只解决 `action` | AGENTS.md「async-openai 依赖」 |
 | CI token 到期 | release / dist 用 token 的到期日集中登记 | release/dist workflow 启动时检查：≤30 天 warning，过期 fail；换 token 时同步更新 | `.github/token-expiry.env` |
 
 ## 注意事项
@@ -152,7 +155,9 @@
 | `dac1977c` `1b611506` | release notes 生成修复（macOS 校验和、shellcheck） | 发布流程可靠、可复现 |
 | `767f3a6a` | token 到期日期登记与提醒 | CI 可维护：凭证轮换不靠记忆 |
 | `903a6c66` `b062b230` `ede7b088` `f9f64558` `9d9e509f` | npm 分发：发布预编译二进制、暴露 `grok` 命令、版本/dist-tag 覆盖、资产/包版本解耦、E409 重试 | 分发渠道：npm/pnpm 全局安装 |
+| `6a48278d` | 合入 upstream `0.2.118` / `SOURCE_REV=64c4de99`；冲突文件按 AGENTS.md 重新应用隐私裁剪，保留 fork CI，并对新增资源遥测发送路径加聚合遥测编译门控 | 上游合并规则 + 宗旨 1（隐私边界编译级）；全量 cargo check 因资源风险停止，已完成 fmt 与轻量 metadata 验证 |
 | `d9fc97cd` `777fbf46` `d62623a1` | 容忍流式 web_search 缺 `action`/`query`、支持 DeepSeek 复数 `queries` | async-openai 临时镜像兼容层（见「临时事项」） |
+| `780d1388` / `our-forks@884aff` / `juya@e03c366` | 上游同步后的 async-openai 复核：`our-forks` 已吸收 `action` 可选，但仍缺 `query` 可选和 DeepSeek `queries`；`juya@e03c366` 只是合并已有 `7defed8` 内容 | 保留 `juya-ai-lab/async-openai@7defed8` 内容 pin，避免恢复后重新出现 `missing field query` 与 DeepSeek `missing field queries`；待剩余两项上游化后再移除 |
 | `bfa46df8` | README 增加 npm/pnpm 全局安装说明 | 文档：配合 npm 分发 |
 | `5aa77501` | 建立脚本驱动的上游 trace 机制：`scripts/upstream-trace.sh` 生成机械事实 + CI 自动刷新回提交 + 决策记录覆盖校验（`--check`）+ `.grok/skills/upstream-trace` 固化流程 + AGENTS.md 规则 | 宗旨 3：决策留痕、机械事实不靠人记；CI 接管刷新与校验 |
 | `a26df1c1` | 修复覆盖校验对短 SHA 长度的依赖：改按完整 SHA 前缀匹配（`%h` 长度随仓库对象数变化，CI 与本地不一致会误报）；生成区统一 8 位显示 | 机制健壮性：跨环境可复现 |

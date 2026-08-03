@@ -37,7 +37,7 @@
 - `Cargo.toml` / `Cargo.lock`：合入后 `cargo check` + `cargo deny check` 验证；`deny.toml` 许可证白名单按需补充。
 - `.github/` 一律保留本仓库的 CI，不采用上游 workflow。
 - 版本：上游 bump 后 release tag 自动跟随（`vX.Y.Z`）；若版本 crate 路径变化，更新 `VERSION_CRATE_MANIFEST`。
-- `async-openai` 依赖（临时改动）：pin 到 `juya-ai-lab/async-openai`（镜像 xAI fork 基座 `95b52eb` + #548 backport：`WebSearchToolCall.action` 与 `WebSearchActionSearch.query` 可选，并兼容 DeepSeek 复数 `action.search.queries`；修复流式 `web_search_call` 偶发 `missing field action` / `missing field query` 及 DeepSeek 400 `missing field queries`）。上游 xai-org 仍 pin `our-forks` 的 `95b52eb`；待上游升级/修复后对齐并移除本临时镜像。
+- `async-openai` 依赖（临时改动）：pin 到 `juya-ai-lab/async-openai`（镜像 xAI fork 基座 `95b52eb` + #548 backport：`WebSearchToolCall.action` 与 `WebSearchActionSearch.query` 可选，并兼容 DeepSeek 复数 `action.search.queries`；修复流式 `web_search_call` 偶发 `missing field action` / `missing field query` 及 DeepSeek 400 `missing field queries`）。本次同步时 xai-org 仍 pin `our-forks` 的 `95b52eb`；`our-forks` 当前 `884aff` 虽已吸收 `action` 可选修复，但仍未使 `query` 可选，也未兼容 DeepSeek 复数 `queries`，所以本 pin 继续保留，待三项能力都上游化后再移除。
 
 ## CI 约定（本仓库自持）
 
@@ -57,3 +57,8 @@
 - commit message 用英文、规范，一个提交一个主题。
 - 资源敏感：轻量、增量检查优先；不做全量检查、prewarm、apt 缓存等重流程；缓存要有效但不能无限膨胀。
 - 拿不准的隐私边界改动，停下来问，不要替用户做决定。
+
+## 协作上下文
+
+- 上下文与对话历史可能跨模型传递；后续协作以当前用户的明确指令、仓库当前状态和本文件/`UPSTREAM_TRACE.md` 的记录为准，不臆测前一模型未记录的意图。
+- 如历史对话与仓库事实或当前指令冲突，先指出冲突；涉及隐私边界的未决事项暂停并向用户确认。
