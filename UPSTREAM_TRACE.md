@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 1b38e1d3 (2026-08-04)
+- 本地 HEAD: 571c2d64 (2026-08-04)
 - 版本: 0.2.118
 - 上游基线 SOURCE_REV: 64c4de99cc822b25ce9c54ab5a4f372093d0885d
 - 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
 - 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 1 提交 / 本 fork 领先 94 提交; 树差异 225 个文件
+- 落后上游 1 提交 / 本 fork 领先 96 提交; 树差异 223 个文件
 - 判定: 上游有新基线：SOURCE_REV 变为 27d2088ae3b3f25e9ddab462caa18a07005ada9a，需按 AGENTS.md 评估合入/裁剪
 <!-- TRACE:status:END -->
 
@@ -60,6 +60,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 571c2d64 | 2026-08-04 | fix: show full size for partial task output |
+| 9ee5aeec | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 1b38e1d3 | 2026-08-04 | docs: record pending upstream privacy audit |
 | 6bc2ec3c | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 4e5100d5 | 2026-08-04 | docs: require full privacy audit for upstream sync |
@@ -216,6 +218,8 @@
 | `b6d5a672` | README 开头声明本 fork 特有的根目录文档，并用 `JUYA FORK MAINTAINED` / `UPSTREAM-CARRIED` 标记分隔 fork 说明与上游带来的内容 | 宗旨 3：同步上游 README 时能识别维护边界，避免覆盖隐私、分发和协作说明 |
 | `4e5100d5` | 将上游同步的隐私审计范围提升为整个 diff、调用链、依赖、构建与发布路径，不以历史裁剪清单替代全量审计；未决项需记录并暂停合入 | 宗旨 1（隐私边界编译级）+ 宗旨 3（同步决策可追溯） |
 | `1b38e1d3` | 记录上游 `0.2.119` 候选的 `e5478eff` / `SOURCE_REV=27d2088a`，明确其尚未完成全量隐私审计，暂不视为已同步 | 宗旨 1（隐私边界编译级）+ 宗旨 3（同步状态可追溯） |
+
+| 571c2d64 | fix: show full size for partial task output；从上游 0.2.119 候选选择性移植后台任务部分日志的真实总大小提示，仅改 xai-grok-tools 输出格式和测试；不更新版本号或 SOURCE_REV | B1 低风险独立批次：无新增外部通信、遥测、持久化、路径扫描或凭证读取；模型额外看到完整输出字节数，已通过 fmt、针对性测试和 xai-grok-tools 全量 lib 回归；其余 0.2.119 改动仍待全量隐私审计 |
 
 ### 上游同步记录（未来在此追加）
 
