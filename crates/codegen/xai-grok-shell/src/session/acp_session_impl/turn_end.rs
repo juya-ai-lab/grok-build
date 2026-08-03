@@ -79,8 +79,9 @@ impl SessionActor {
     }
 
     /// Emit `x.ai/git_head_changed` after an edit/shell command that may have
-    /// moved HEAD (e.g. `git checkout`), so clients update their status bar
-    /// immediately rather than waiting for the debounced fs-watch refresh.
+    /// moved HEAD (e.g. `git checkout`, `git commit`), so clients update their
+    /// status bar and changes panel immediately rather than waiting for the
+    /// debounced fs-watch refresh.
     pub(super) async fn maybe_notify_git_branch(&self) {
         if !self.git_head_enabled {
             return;
