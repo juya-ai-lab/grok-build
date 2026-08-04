@@ -10,7 +10,12 @@
 > [!NOTE]
 > 本构建硬禁用 Claude/Codex/Cursor 兼容、自动会话/工作区制品上传、relay 同步，以及 external OTEL 中的提示词和工具详情字段；聚合元数据遥测、错误报告和反馈路径也在源码中固定关闭。原版 Grok 已有的 `.agents/skills` 与 `.agents/commands` 支持仍保留；OAuth 登录和正常推理不受影响。
 
-> **预编译安装方式可任选**：可以从 [GitHub Releases](https://github.com/juya-ai-lab/grok-build/releases) 下载对应平台二进制，也可以使用 npm/pnpm 全局安装预编译包；两种方式都不需要本地编译。
+> **预编译安装方式可任选**：可以从 [GitHub Releases](https://github.com/juya-ai-lab/grok-build/releases) 下载对应平台二进制，也可以使用 npm/pnpm 全局安装预编译包：
+> ```sh
+> npm install -g @juya-ai-lab/grok-build
+> # 或
+> pnpm add -g @juya-ai-lab/grok-build
+> ```
 
 <!-- JUYA FORK MAINTAINED:END -->
 
