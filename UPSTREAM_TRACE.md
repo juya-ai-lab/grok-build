@@ -16,13 +16,13 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 918f0fe0 (2026-08-04)
-- 版本: 0.2.119
-- 上游基线 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 上游 upstream/main: e5478eff (2026-08-03, Synced from monorepo)
-- 上游 SOURCE_REV: 27d2088ae3b3f25e9ddab462caa18a07005ada9a
-- 落后上游 0 提交 / 本 fork 领先 128 提交; 树差异 183 个文件
-- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 183 个文件，应为本地裁剪，需人工核对
+- 本地 HEAD: 24c579a8 (2026-08-06)
+- 版本: 0.2.120
+- 上游基线 SOURCE_REV: d6937fe255dce4133c3d000a50f9cb94de12f06f
+- 上游 upstream/main: ed6d5436 (2026-08-04, Synced from monorepo)
+- 上游 SOURCE_REV: d6937fe255dce4133c3d000a50f9cb94de12f06f
+- 落后上游 0 提交 / 本 fork 领先 130 提交; 树差异 189 个文件
+- 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 189 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
 ## 上游同步日志
@@ -32,6 +32,7 @@
 <!-- TRACE:sync:BEGIN -->
 | 上游提交 | 日期 | 内容 | SOURCE_REV |
 |---|---|---|---|
+| ed6d5436 | 2026-08-04 | Synced from monorepo | d6937fe255dce4133c3d000a50f9cb94de12f06f |
 | e5478eff | 2026-08-03 | Synced from monorepo | 27d2088ae3b3f25e9ddab462caa18a07005ada9a |
 | 780d1388 | 2026-08-03 | Synced from monorepo | 64c4de99cc822b25ce9c54ab5a4f372093d0885d |
 | a4221165 | 2026-07-31 | Synced from monorepo | 8d69c91f02bcacf01e98d5aebbf2f92547c45738 |
@@ -60,6 +61,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 24c579a8 | 2026-08-06 | Merge upstream 0.2.120 sync with privacy trims |
+| e2b7d8ef | 2026-08-04 | chore: refresh upstream trace [skip ci] |
 | 918f0fe0 | 2026-08-04 | docs: Update README.md |
 | 4f94be75 | 2026-08-03 | chore: refresh upstream trace [skip ci] |
 | 125c8b1c | 2026-08-04 | chore: refresh upstream trace |
@@ -202,13 +205,14 @@
 
 本节用于上下文压缩或协作者交接时快速恢复现场；根目录文档和 Git 事实优先于旧的临时笔记。
 
-- 当前分支：`codex/upstream-0.2.119-final-merge`；选择性同步最终合并提交：`82537ac23b0678e7500e22a3dd759409831a28dc`（`Merge upstream 0.2.119 sync with privacy trims`），父提交为本 fork `dc9b475a` 与上游 `e5478eff`。
-- 上游基线：`upstream/main=e5478eff1e4050558e12e1328b85e6616632efb6`，上游版本 `0.2.119`，`SOURCE_REV=27d2088ae3b3f25e9ddab462caa18a07005ada9a`；本 fork 已同步到版本 `0.2.119` 和同一 `SOURCE_REV`。
-- 已选择性合入：`efe7a0fb`（project-picker/recent dirs、非项目目录启动、model/TUI deferred flow）、`5e890799`（禁止无 session 时提前持久化模型）、`128c8b39`（版本/文档/lock/async-openai pin）、以及本次 `82537ac2` 的上游 merge 结果；B1/B2、隐私、认证和 RPC 批次仍保留。
-- 已保护并验证 fork 既有改动：`040e3044` 仍为祖先；`async-openai@e03c366c` pin、web-search 的可选 `action`/`query` 与 DeepSeek 复数 `queries` 处理保留；`.agents/skills`、`.agents/commands`、OAuth、正常推理、queries/actions 和 fork CI 保留；上游新增 `SkillTrigger`/`skill_md_read` 外部遥测未进入 Rust 代码。
-- 证据摘要：全仓库 `cargo fmt --all -- --check`、locked metadata、merge diff 检查和隐私静态扫描通过；B1/B2、隐私边界、web-search、auth、RPC、telemetry/fsnotify 定向测试已有通过记录。新增上游 `external_auth_conforming_provider` 与 pager 相关定向测试在独立最终 worktree 的冷增量编译中分别于 180 秒硬时限内未完成，输出无编译诊断；因此不宣称本地产物或这两项冷编译测试通过，待 Release CI/后续本地增量编译验证。
-- 明确排除：`SkillTrigger`、`skill_md_read` 以及会扩大外部 schema 的 skill source/name/trigger 遥测；上游 `.github` workflow 不覆盖本 fork CI。依赖仓库没有新增本地修改或推送，主项目只复用已存在且远端可核验的 `juya-ai-lab/async-openai@e03c366c`。
-- 操作状态：临时目录 `upstream-0.2.119-work/` 已删除；当前尚未推送 main、尚未创建 `v0.2.119`、尚未启动 Release workflow；旧 `v0.2.118-fix1` 仍指向 `cb53eced54c3a6e76773413bdeb625075213bf38`。完成本记录后再做最终 pre-push 检查、推送和 tag。
+- 当前分支：`main`；选择性同步合并提交：`24c579a81e89f54e71885a483af66e6e358647e2`（`Merge upstream 0.2.120 sync with privacy trims`），父提交为本 fork `e2b7d8ef` 与上游 `ed6d5436`。
+- 上游基线：`upstream/main=ed6d543643628663873c5de28298e022ed634238`，上游版本 `0.2.120`，`SOURCE_REV=d6937fe255dce4133c3d000a50f9cb94de12f06f`；本 fork 已同步到版本 `0.2.120` 和同一 `SOURCE_REV`。
+- 已选择性合入：`24c579a8` 的上游 merge 结果，以及既有的 project/TUI 启动、deferred model persistence、async-openai pin、B1/B2、隐私、认证、RPC 和 fork CI 批次；上游 0.2.120 的 ACP session/resume/close、workflow 并发上限、MCP image extraction、fork-copy bounded-memory、sandbox、auth suffix、model picker/TUI 和 GitHub export 修复均保留。
+- 已保护并验证 fork 既有改动：`040e3044`、`2d9fbbde` 等仍在祖先链；`async-openai@e03c366c` pin、web-search 的可选 `action`/`query` 与 DeepSeek 复数 `queries` 处理保留；`.agents/skills`、`.agents/commands`、OAuth、正常推理、queries/actions 和 fork CI 保留。上游新增的 `shortcut_used` 聚合遥测、子代理 GCS metadata/upload context 和旧合并冲突中的 GCS 字段未进入最终代码。
+- 证据摘要：在已安装的 stable 工具链上 `cargo fmt --all -- --check`、`cargo metadata --no-deps --locked`、`git diff --check`、merge-conflict 检查和隐私静态扫描通过；GitHub workflow `zizmor` 无 findings。没有执行本地 `cargo check/build`，项目锁定的 1.94.0 toolchain 本地 rustup 组件下载失败，产物编译留给 Release CI；因此不宣称本地产物验证通过。
+- 明确排除：`shortcut_used`、`SkillTrigger`、`skill_md_read` 以及会扩大外部 schema 的 skill source/name/trigger 遥测；子代理 `SubagentSessionMetadata`/GCS artifact、prompt/permission/turn trace upload context 和凭证诊断日志；上游 `.github` workflow 不覆盖本 fork CI。依赖仓库没有新增本地修改或推送，主项目只复用已存在且远端可核验的 `juya-ai-lab/async-openai@e03c366c`。
+- Issue 状态：仓库内已有公开 bug-report 模板；“所有用户可提 Issue”是 GitHub repository setting，不由代码树声明，本次按用户已确认的远端设置处理。
+- 操作状态：当前尚未推送 `main`、尚未创建 `v0.2.120`、尚未启动 Release workflow；旧 `v0.2.118-fix1` 仍指向 `cb53eced54c3a6e76773413bdeb625075213bf38`。完成本记录后再做最终 pre-push 检查、推送和 tag。
 - 继续工作时先复核 `git status --short --branch`、本快照和 `AGENTS.md`；后续上游更新仍须按全量 diff、调用链、依赖、构建和发布路径审计分批处理，不得以“上游有更新”作为自动合入依据。
 
 ## 注意事项
@@ -271,6 +275,10 @@
 | `128c8b39` | 准备 0.2.119 版本、`SOURCE_REV`、文档和锁文件；跟随上游 async-openai `95b52eb` 基线但 pin 到已有 `juya-ai-lab/async-openai@e03c366c`，保留 `action`/`query`/DeepSeek `queries` 兼容，并新增缺字段/复数查询回归测试 | 宗旨 2（Responses/DeepSeek 功能兼容）+ 宗旨 3（依赖来源和验证可追溯）；metadata、受影响 crate check、定向测试、fmt 和 diff 检查通过，依赖仓库无本地改动 |
 
 | `82537ac2` | 以真实 `git merge --no-ff upstream/main` 形成上游 `e5478eff` 的第二父提交；按全量隐私/功能审计手工保留 vendor/config/path/upload 隔离、`040e3044`、queries/actions 和 async-openai 兼容，选择性吸收 project/model/TUI、版本/lock/release 相关安全部分、外部认证契约测试与 git-head 注释；拒绝 `SkillTrigger`/`skill_md_read` 外部遥测并移除过时的 ProjectPicker telemetry 定义 | 宗旨 1（隐私边界编译级）+ 宗旨 2（功能兼容）+ 宗旨 3（真实同步拓扑和决策可追溯）；fmt、locked metadata、静态扫描和 merge 检查通过；pager/auth 冷编译定向测试在 180 秒受控时限内未完成且无编译诊断，不宣称产物验证通过 |
+
+| `24c579a8` | 真实 `git merge --no-ff upstream/main` 合入上游 `ed6d5436` / `0.2.120`；保留 ACP session/resume/close、workflow 16 并发上限、MCP image extraction、fork-copy bounded-memory、sandbox/auth/model/TUI/GitHub export 修复，并重新应用 fork 的隐私边界。移除上游新增 `shortcut_used` 聚合遥测；冲突处拒绝子代理 GCS metadata/upload context，保留本地 resume、推理、worktree、watcher 和 hunk tracking；修正子代理父会话句柄以适配新 session registry | 宗旨 1（编译级隐私边界）+ 宗旨 2（上游功能兼容）+ 宗旨 3（真实同步拓扑和决策可追溯）；stable metadata/fmt、diff、隐私静态扫描和 workflow zizmor 通过，未执行本地 cargo check/build，交由 Release CI |
+
+| `918f0fe0` | README 文档同步；与本次 0.2.120 merge 一同补齐 trace 覆盖记录，不改变运行时行为 | 宗旨 3（决策记录可追溯） |
 
 | `9c28ecd5` | 记录最终上游 merge 的父提交、选择性裁剪、依赖例外、验证证据和待推送/tag 状态，更新交接快照；不改变运行时行为 | 宗旨 3（同步状态、验证边界和后续操作可追溯） |
 
