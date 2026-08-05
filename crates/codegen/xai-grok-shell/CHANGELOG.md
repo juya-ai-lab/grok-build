@@ -1,5 +1,20 @@
 # Changelog
 
+# 0.2.120 — 2026-08-03
+
+## Bug Fixes
+
+- **Model picker** now updates the status bar and /model menu immediately, even before the first prompt creates a session.
+- **Changes panel** now refreshes after the agent commits on the current branch instead of showing stale unstaged files.
+- **Background task** completions now report the full log size and read hint even when only a short prefix was captured.
+- **GitHub export** on old hibernated sessions now shows a clear message to start a new chat instead of a generic error.
+
+## Maintenance
+
+- The upstream `shortcut_used` aggregate telemetry event is intentionally not
+  adopted; keyboard shortcut behavior remains unchanged.
+
+
 # 0.2.119 — 2026-08-04
 
 ## Features
@@ -1947,4 +1962,3 @@
 ## Performance
 
 - **Large chat sessions** now use substantially less memory and run faster during forks, rewinds, and compaction.
-

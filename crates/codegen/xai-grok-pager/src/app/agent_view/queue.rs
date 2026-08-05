@@ -4,7 +4,7 @@
 #[cfg(test)]
 use super::test_fixtures;
 use super::{AgentPane, AgentView, PromptMode, overlay_action_to_outcome};
-use crate::actions::ActionRegistry;
+use crate::actions::{ActionId, ActionRegistry};
 use crate::app::actions::Action;
 use crate::app::app_view::InputOutcome;
 use crossterm::event::KeyEvent;

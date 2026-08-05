@@ -267,6 +267,8 @@ impl ActionRegistry {
     ///
     /// Uses **exact** context matching — each layer in the input chain
     /// calls this with its own context level.
+    ///
+    /// Peek/probe only: does **not** emit telemetry.
     pub fn lookup(&self, event: &KeyEvent, context: When) -> Option<ActionId> {
         for def in &self.actions {
             if def.context != context {
