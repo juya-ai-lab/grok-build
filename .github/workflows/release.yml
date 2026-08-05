@@ -272,6 +272,89 @@ jobs:
           cache-on-failure: true
           shared-key: ${{ env.CARGO_CACHE_SHARED_KEY }}
 
+      - name: Cache bundled ripgrep
+        if: runner.os != 'Windows'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/grok-ripgrep
+          key: ripgrep-15.0.0-${{ matrix.target }}
+
+      - name: Prepare bundled ripgrep
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          RG_VERSION: "15.0.0"
+          RG_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+
+          # xai-grok-tools' build.rs accepts a pre-extracted target binary via
+          # GROK_TOOLS_BUNDLE_RG_PATH. Fetch it here so the release build has
+          # retries, a stable cache, and a pinned archive checksum instead of a
+          # one-shot request from inside a Cargo build script.
+          case "${RG_TARGET}" in
+            x86_64-unknown-linux-gnu)
+              rg_asset_target="x86_64-unknown-linux-musl"
+              rg_sha256="253ad0fd5fef0d64cba56c70dccdacc1916d4ed70ad057cc525fcdb0c3bbd2a7"
+              ;;
+            aarch64-unknown-linux-gnu)
+              rg_asset_target="aarch64-unknown-linux-gnu"
+              rg_sha256="15f8cc2fab12d88491c54d49f38589922a9d6a7353c29b0a0856727bcdf80754"
+              ;;
+            aarch64-apple-darwin)
+              rg_asset_target="aarch64-apple-darwin"
+              rg_sha256="98bb2e61e7277ba0ea72d2ae2592497fd8d2940934a16b122448d302a6637e3b"
+              ;;
+            x86_64-apple-darwin)
+              rg_asset_target="x86_64-apple-darwin"
+              rg_sha256="44128c733d127ddbda461e01225a68b5f9997cfe7635242a797f645ca674a71a"
+              ;;
+            *)
+              echo "No bundled ripgrep asset mapping for ${RG_TARGET}" >&2
+              exit 1
+              ;;
+          esac
+
+          cache_dir="${RUNNER_TEMP}/grok-ripgrep/${rg_asset_target}"
+          archive="${cache_dir}/ripgrep-${RG_VERSION}-${rg_asset_target}.tar.gz"
+          extract_dir="${cache_dir}/extract"
+          rg_path="${cache_dir}/rg"
+          url="https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-${rg_asset_target}.tar.gz"
+          mkdir -p "${cache_dir}"
+
+          if [ ! -x "${rg_path}" ]; then
+            curl \
+              --fail --show-error --location \
+              --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 300 \
+              --connect-timeout 20 --max-time 300 \
+              --output "${archive}" "${url}"
+
+            if command -v shasum >/dev/null 2>&1; then
+              actual_sha256="$(shasum -a 256 "${archive}" | awk '{print $1}')"
+            else
+              actual_sha256="$(sha256sum "${archive}" | awk '{print $1}')"
+            fi
+            if [ "${actual_sha256}" != "${rg_sha256}" ]; then
+              echo "SHA-256 mismatch for ${url}" >&2
+              echo "expected: ${rg_sha256}" >&2
+              echo "actual:   ${actual_sha256}" >&2
+              exit 1
+            fi
+
+            mkdir -p "${extract_dir}"
+            tar -xzf "${archive}" -C "${extract_dir}"
+            found_rg="$(find "${extract_dir}" -type f -name rg -print -quit)"
+            if [ -z "${found_rg}" ]; then
+              echo "Could not find rg in ${archive}" >&2
+              exit 1
+            fi
+            cp "${found_rg}" "${rg_path}"
+            chmod 0755 "${rg_path}"
+          fi
+
+          echo "GROK_TOOLS_BUNDLE_RG_PATH=${rg_path}" >> "${GITHUB_ENV}"
+          echo "Prepared ripgrep ${RG_VERSION} for ${RG_TARGET}: ${rg_path}"
+
       - name: Build Release Binary
         shell: bash
         env:
