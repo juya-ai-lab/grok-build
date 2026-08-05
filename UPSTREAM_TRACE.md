@@ -236,6 +236,7 @@
 |---|---|---|
 | `7190b3f7` `4a6004e2` `a5c85bad` `6d0bfa9d` `bff09687` `422ee9ba` `8afeb2c7` `f36387fa` `38f87fae` | 隐私裁剪 port 系列：禁用 vendor 兼容与内容上传、编译级 kill switch/路径校验/relay 门控、遥测/上传/反馈/错误上报门控、移除 Claude/Codex/Cursor 兼容面、pager/文档审计、fork CI 文件、fmt 收尾 | 宗旨 1（隐私边界编译级，不可协商）+ 2（可用性不缩水）；即 AGENTS.md 引用的 port 提交 `6d0bfa9`/`bff0968`/`422ee9b` |
 | `2eed7e74` `2074bb9d` `d286045e` `3c17dd0a` `80c0b815` `1e6f0824` `983a855a` `de0a82a5` | release workflow 基建：多平台发布、手动触发（tag 输入/自动解析）、版本 crate 路径可配、先建 tag 共享解析版本、防 tag 指向错误 | AGENTS.md「Release」：网页手动发版；版本单点可配 |
+| `2ed8c879` | release workflow 的 ripgrep 预取：按目标架构缓存资产、下载重试并固定 SHA-256 校验，再通过 `GROK_TOOLS_BUNDLE_RG_PATH` 交给 Cargo；`docs: record CI release download resilience decision` | 宗旨 3（可追溯且资源敏感的 GitHub Actions 发布）；仅改 CI，未改变运行时代码或隐私边界 |
 | `76cb0a34` `a402686e` `e844fbab` `7c1d67e6` `353933dc` `4377dccf` `64b5d144` | 构建缓存：sccache/protoc 缓存、sccache 统计、按目标限容、Windows 跳过 sccache、缓存预算限容、shellcheck 修复 | 资源敏感：缓存要有效但不能无限膨胀 |
 | `0bcc2317` `634a3dcc` `6eb2edd7` `5a88ec74` `60e0d84d` `35102ee7` `15c8c61c` `0838904b` | format/lint/依赖审计：仅 fmt 的轻量检查、workflow 加固与 cargo-deny、工具/toolchain 缓存、zizmor/cargo-deny 版本锁定、并发分组、toolchain 跟随 `rust-toolchain.toml` | AGENTS.md「CI 约定」：独立、不阻塞发布 |
 | `987822ff` `18ed28f6` `0172b44d` | 分支合并（port-upstream / ci/tag-release / port/upstream-0.2.117） | 合入记录 |
