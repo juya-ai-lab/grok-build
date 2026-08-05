@@ -16,12 +16,12 @@
 ## 当前状态
 
 <!-- TRACE:status:BEGIN -->
-- 本地 HEAD: 2ed8c879 (2026-08-06)
+- 本地 HEAD: 4422aafa (2026-08-06)
 - 版本: 0.2.120
 - 上游基线 SOURCE_REV: d6937fe255dce4133c3d000a50f9cb94de12f06f
 - 上游 upstream/main: ed6d5436 (2026-08-04, Synced from monorepo)
 - 上游 SOURCE_REV: d6937fe255dce4133c3d000a50f9cb94de12f06f
-- 落后上游 0 提交 / 本 fork 领先 133 提交; 树差异 189 个文件
+- 落后上游 0 提交 / 本 fork 领先 135 提交; 树差异 189 个文件
 - 判定: 无新基线：上游 SOURCE_REV 与本地一致；树差异 189 个文件，应为本地裁剪，需人工核对
 <!-- TRACE:status:END -->
 
@@ -61,6 +61,8 @@
 <!-- TRACE:fork:BEGIN -->
 | 提交 | 日期 | 内容 |
 |---|---|---|
+| 4422aafa | 2026-08-06 | docs: record CI release download resilience decision |
+| b4f96548 | 2026-08-05 | chore: refresh upstream trace [skip ci] |
 | 2ed8c879 | 2026-08-06 | ci: make release ripgrep download resilient |
 | 41397e90 | 2026-08-05 | chore: refresh upstream trace [skip ci] |
 | f5641f37 | 2026-08-06 | chore: update upstream trace |
